@@ -14,7 +14,6 @@ export function CalendarBlock({
   top: number
   height: number
   onBlockClick?: (block: PlannedBlock, goal: ActivityGoal) => void
-  onStatusChange?: (blockId: string, status: 'done' | 'missed' | 'partial') => void
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: block.id,

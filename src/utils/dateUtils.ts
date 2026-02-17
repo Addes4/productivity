@@ -1,19 +1,17 @@
 import {
-  addMinutes,
   addDays,
+  startOfDay,
   startOfWeek,
   format,
-  isWithinInterval,
   getDay,
   setHours,
   setMinutes,
   setSeconds,
   setMilliseconds,
-  differenceInMinutes,
+  differenceInCalendarDays,
   min as minDate,
   max as maxDate,
 } from 'date-fns'
-import { sv } from 'date-fns/locale'
 import type { DayOfWeek } from '../types'
 
 const TIME_FORMAT = 'HH:mm'
@@ -42,11 +40,6 @@ export function getDayOfWeek(d: Date): DayOfWeek {
   return getDay(d) as DayOfWeek
 }
 
-/** Är datum inom intervallet [start, end] (inklusive)? */
-export function isBetween(date: Date, start: Date, end: Date): boolean {
-  return isWithinInterval(date, { start, end }) || date.getTime() === end.getTime()
-}
-
 /** Genererar alla datum för veckan (mån–sön) */
 export function getWeekDates(weekStart: Date): Date[] {
   const out: Date[] = []
@@ -54,6 +47,28 @@ export function getWeekDates(weekStart: Date): Date[] {
     out.push(addDays(weekStart, i))
   }
   return out
+}
+
+export function isAllDayEventRange(start: Date, end: Date): boolean {
+  if (!(end > start)) return false
+  const startIsMidnight =
+    start.getHours() === 0 &&
+    start.getMinutes() === 0 &&
+    start.getSeconds() === 0 &&
+    start.getMilliseconds() === 0
+  const endIsMidnight =
+    end.getHours() === 0 &&
+    end.getMinutes() === 0 &&
+    end.getSeconds() === 0 &&
+    end.getMilliseconds() === 0
+  if (!startIsMidnight || !endIsMidnight) return false
+  return differenceInCalendarDays(end, start) >= 1
+}
+
+export function doesRangeOverlapDay(start: Date, end: Date, day: Date): boolean {
+  const dayStart = startOfDay(day)
+  const dayEnd = addDays(dayStart, 1)
+  return start < dayEnd && end > dayStart
 }
 
 /** Slots: { start, end }[] för en given dag, mellan dayStart och dayEnd, minus blockerade intervall */
@@ -86,20 +101,4 @@ export function getFreeSlotsForDay(
     slots.push({ start: new Date(current), end: new Date(endOfDay) })
   }
   return slots
-}
-
-export function addMinutesToDate(date: Date, minutes: number): Date {
-  return addMinutes(date, minutes)
-}
-
-export function slotDurationMinutes(slot: TimeSlot): number {
-  return differenceInMinutes(slot.end, slot.start)
-}
-
-export function formatDayShort(d: Date): string {
-  return format(d, 'EEE d/M', { locale: sv })
-}
-
-export function formatDayLong(d: Date): string {
-  return format(d, 'EEEE d MMMM', { locale: sv })
 }

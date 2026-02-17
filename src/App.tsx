@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore'
 import { CalendarGrid } from './components/CalendarGrid'
 import { SidePanel } from './components/SidePanel'
 import { AddEventModal } from './components/AddEventModal'
 import { WeeklyReportModal } from './components/WeeklyReportModal'
+import { SettingsPanel } from './components/SettingsPanel'
 import { exportState, importState } from './utils/storage'
 import type { CalendarEvent, ActivityGoal, PlannedBlock } from './types'
 import { BlockDetailModal } from './components/BlockDetailModal'
 import { parseIcsCalendar } from './utils/icsImport'
+import { isWeekNumberEvent } from './utils/calendarEventUtils'
+import { expandCalendarEventsForWeek } from './utils/recurringEvents'
 
 interface CalendarImportResult {
   imported: number
@@ -20,11 +23,20 @@ interface GoogleAuthStatus {
   email: string | null
 }
 
+function parseWeekStart(weekStart: string): Date {
+  const [y, m, d] = weekStart.split('-').map(Number)
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
+}
+
 function App() {
   const {
     state,
     addCalendarEvent,
     addCalendarEvents,
+    replaceGoogleCalendarEventsForWeek,
+    clearGoogleCalendarEvents,
+    updateCalendarEvent,
+    removeCalendarEvent,
     updatePlannedBlock,
     addGoal,
     updateGoal,
@@ -39,13 +51,16 @@ function App() {
 
   const [addEventOpen, setAddEventOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState<string[]>([])
   const [selectedBlock, setSelectedBlock] = useState<PlannedBlock | null>(null)
+  const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<CalendarEvent | null>(null)
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null)
   const [googleAuthStatus, setGoogleAuthStatus] = useState<GoogleAuthStatus>({
     connected: false,
     email: null,
   })
+  const autoSyncedWeekRef = useRef<string | null>(null)
 
   const handleBlockMove = useCallback(
     (blockId: string, newStart: string, newEnd: string) => {
@@ -62,11 +77,48 @@ function App() {
   )
 
   const handleSaveEvent = useCallback(
-    (event: Omit<CalendarEvent, 'id'>) => {
-      addCalendarEvent({ ...event, id: `event-${Date.now()}` })
+    (event: Omit<CalendarEvent, 'id'>, existingId?: string) => {
+      if (existingId) {
+        updateCalendarEvent(existingId, {
+          ...event,
+          recurrenceParentId: undefined,
+          recurrenceInstanceDate: undefined,
+        })
+        setSelectedCalendarEvent(null)
+      } else {
+        addCalendarEvent({
+          ...event,
+          recurrenceParentId: undefined,
+          recurrenceInstanceDate: undefined,
+          id: `event-${Date.now()}`,
+        })
+      }
       setAddEventOpen(false)
     },
-    [addCalendarEvent]
+    [addCalendarEvent, updateCalendarEvent]
+  )
+
+  const handleDeleteEvent = useCallback(
+    (eventToDelete: CalendarEvent) => {
+      if (eventToDelete.recurrenceParentId && eventToDelete.recurrenceInstanceDate) {
+        const parent = state.calendarEvents.find((e) => e.id === eventToDelete.recurrenceParentId)
+        if (parent) {
+          // Ta bort endast vald instans genom att lägga datumet i undantagslistan.
+          const existingExDates = parent.recurrenceExDates ?? []
+          const nextExDates = Array.from(
+            new Set([...existingExDates, eventToDelete.recurrenceInstanceDate])
+          ).sort()
+          updateCalendarEvent(parent.id, {
+            recurrenceExDates: nextExDates,
+          })
+        }
+      } else {
+        removeCalendarEvent(eventToDelete.id)
+      }
+      setSelectedCalendarEvent((current) => (current?.id === eventToDelete.id ? null : current))
+      setAddEventOpen(false)
+    },
+    [removeCalendarEvent, state.calendarEvents, updateCalendarEvent]
   )
 
   const handleExport = useCallback(() => {
@@ -101,6 +153,10 @@ function App() {
       let skipped = 0
 
       parsed.events.forEach((ev, index) => {
+        if (isWeekNumberEvent({ title: ev.title, category: ev.category || 'Import' })) {
+          skipped++
+          return
+        }
         const key = keyOf(ev.title, ev.start, ev.end)
         if (existingKeys.has(key)) {
           skipped++
@@ -150,7 +206,11 @@ function App() {
   useEffect(() => {
     refreshGoogleAuthStatus()
     const url = new URL(window.location.href)
-    if (url.searchParams.has('google_oauth')) {
+    const oauthResult = url.searchParams.get('google_oauth')
+    if (oauthResult === 'success') {
+      autoSyncedWeekRef.current = null
+    }
+    if (oauthResult) {
       url.searchParams.delete('google_oauth')
       window.history.replaceState({}, '', url.toString())
     }
@@ -179,45 +239,60 @@ function App() {
       }
 
       const data = (await response.json()) as {
-        events: { title: string; start: string; end: string; category?: string }[]
+        events: { title: string; start: string; end: string; category?: string; allDay?: boolean }[]
         warnings?: string[]
+      }
+
+      const weekStartDate = parseWeekStart(state.currentWeekStart)
+      const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+      const overlapsWeek = (event: CalendarEvent) => {
+        const start = new Date(event.start)
+        const end = new Date(event.end)
+        return start < weekEndDate && end > weekStartDate
       }
 
       const keyOf = (title: string, start: string, end: string) =>
         `${title.trim().toLowerCase()}|${start}|${end}`
 
       const existingKeys = new Set(
-        state.calendarEvents.map((e) => keyOf(e.title, e.start, e.end))
+        state.calendarEvents
+          .filter((e) => !(e.source === 'google' && overlapsWeek(e)))
+          .map((e) => keyOf(e.title, e.start, e.end))
       )
-      const newEvents: CalendarEvent[] = []
+      const googleEvents: CalendarEvent[] = []
       let skipped = 0
 
       data.events.forEach((ev, index) => {
+        if (isWeekNumberEvent({ title: ev.title, category: ev.category || 'Google' })) {
+          skipped++
+          return
+        }
         const key = keyOf(ev.title, ev.start, ev.end)
         if (existingKeys.has(key)) {
           skipped++
           return
         }
         existingKeys.add(key)
-        newEvents.push({
+        googleEvents.push({
           id: `event-google-${Date.now()}-${index}`,
           title: ev.title || 'Google-bokning',
           start: ev.start,
           end: ev.end,
-          source: 'import',
+          allDay: ev.allDay === true,
+          source: 'google',
           locked: true,
           category: ev.category || 'Google',
         })
       })
 
-      addCalendarEvents(newEvents)
+      replaceGoogleCalendarEventsForWeek(state.currentWeekStart, googleEvents)
       return {
-        imported: newEvents.length,
+        imported: googleEvents.length,
         skipped,
         warnings: data.warnings ?? [],
       }
     },
-    [addCalendarEvents, state.calendarEvents, state.currentWeekStart]
+    [replaceGoogleCalendarEventsForWeek, state.calendarEvents, state.currentWeekStart]
   )
 
   const disconnectGoogleCalendar = useCallback(async () => {
@@ -251,7 +326,27 @@ function App() {
   const handleDisconnectGoogleCalendar = useCallback(async () => {
     await disconnectGoogleCalendar()
     setGoogleAuthStatus({ connected: false, email: null })
-  }, [disconnectGoogleCalendar])
+    clearGoogleCalendarEvents()
+    autoSyncedWeekRef.current = null
+  }, [clearGoogleCalendarEvents, disconnectGoogleCalendar])
+
+  useEffect(() => {
+    if (!googleAuthStatus.connected) {
+      autoSyncedWeekRef.current = null
+      return
+    }
+    const weekKey = state.currentWeekStart
+    if (autoSyncedWeekRef.current === weekKey) return
+    autoSyncedWeekRef.current = weekKey
+    void (async () => {
+      try {
+        await importGoogleCalendar()
+      } catch {
+        // Allow retry if the auto-sync request fails.
+        autoSyncedWeekRef.current = null
+      }
+    })()
+  }, [googleAuthStatus.connected, importGoogleCalendar, state.currentWeekStart])
 
   const selectedGoal = selectedBlock
     ? state.goals.find((g) => g.id === selectedBlock.goalId)
@@ -260,13 +355,20 @@ function App() {
   const categories = Array.from(
     new Set([
       ...state.goals.map((g) => g.category),
-      ...state.calendarEvents.map((e) => e.category),
+      ...state.calendarEvents
+        .filter((e) => !isWeekNumberEvent(e))
+        .map((e) => e.category),
     ])
   ).filter(Boolean)
 
+  const weekCalendarEvents = useMemo(
+    () => expandCalendarEventsForWeek(state.calendarEvents, state.currentWeekStart),
+    [state.calendarEvents, state.currentWeekStart]
+  )
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-sky-100/60 flex flex-col">
-      <header className="backdrop-blur bg-white/85 border-b border-slate-200 px-4 py-3 flex items-center justify-between flex-wrap gap-2 sticky top-0 z-20">
+      <header className="backdrop-blur bg-white/85 border-b border-slate-200 px-4 py-3 flex items-center justify-between flex-wrap gap-2 sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-bold text-slate-800">Produktivitetsplanerare</h1>
           <div className="flex gap-2">
@@ -289,7 +391,10 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setAddEventOpen(true)}
+              onClick={() => {
+                setSelectedCalendarEvent(null)
+                setAddEventOpen(true)
+              }}
               className="px-3 py-1.5 text-sm bg-sky-600 text-white rounded-xl hover:bg-sky-700 font-semibold shadow-sm transition-colors"
             >
               + Lägg till bokning
@@ -317,6 +422,13 @@ function App() {
           ))}
           <button
             type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="px-3 py-1.5 text-sm border border-slate-300 rounded-xl hover:bg-slate-50 font-medium transition-colors"
+          >
+            Inställningar
+          </button>
+          <button
+            type="button"
             onClick={() => setReportOpen(true)}
             className="px-3 py-1.5 text-sm bg-slate-700 text-white rounded-xl hover:bg-slate-600 font-medium transition-colors"
           >
@@ -325,25 +437,30 @@ function App() {
         </div>
       </header>
 
-      <div className="flex-1 flex min-h-0 gap-4 p-4 flex-col xl:flex-row">
-        <main className="flex-1 min-w-0 overflow-auto">
+      <div className="flex-1 flex min-h-0 gap-4 p-4 flex-col xl:flex-row xl:overflow-hidden">
+        <main className="flex-1 min-w-0 min-h-0 overflow-auto xl:overflow-hidden">
           <CalendarGrid
             weekStart={state.currentWeekStart}
-            calendarEvents={state.calendarEvents}
+            calendarEvents={weekCalendarEvents}
             plannedBlocks={state.plannedBlocks}
             goals={state.goals}
             settings={state.settings}
             onBlockMove={handleBlockMove}
             onBlockClick={(block) => setSelectedBlock(block)}
-            onBlockStatusChange={(id, status) => updatePlannedBlock(id, { status })}
-            onAddEvent={() => setAddEventOpen(true)}
+            onCalendarEventClick={(event) => {
+              setAddEventOpen(false)
+              setSelectedCalendarEvent(event)
+            }}
+            onAddEvent={() => {
+              setSelectedCalendarEvent(null)
+              setAddEventOpen(true)
+            }}
             categoryFilter={categoryFilter}
           />
         </main>
         <SidePanel
           goals={state.goals}
           plannedBlocks={state.plannedBlocks}
-          settings={state.settings}
           minimumViableDay={state.minimumViableDay}
           conflictReports={state.conflictReports}
           editingGoalId={editingGoalId}
@@ -353,7 +470,6 @@ function App() {
           onRemoveGoal={removeGoal}
           onPlanWeek={() => runPlanWeek()}
           onToggleMVD={setMinimumViableDay}
-          onSaveSettings={setSettings}
           onExport={handleExport}
           onImport={handleImport}
           onImportIcsText={importIcsText}
@@ -365,11 +481,16 @@ function App() {
         />
       </div>
 
-      {addEventOpen && (
+      {(addEventOpen || selectedCalendarEvent) && (
         <AddEventModal
           weekStart={state.currentWeekStart}
+          existingEvent={selectedCalendarEvent}
           onSave={handleSaveEvent}
-          onClose={() => setAddEventOpen(false)}
+          onDelete={handleDeleteEvent}
+          onClose={() => {
+            setAddEventOpen(false)
+            setSelectedCalendarEvent(null)
+          }}
         />
       )}
 
@@ -380,6 +501,24 @@ function App() {
           conflictReports={state.conflictReports}
           onClose={() => setReportOpen(false)}
         />
+      )}
+
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-xl w-full max-h-[90vh] overflow-auto p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SettingsPanel
+              settings={state.settings}
+              onSave={setSettings}
+              onClose={() => setSettingsOpen(false)}
+            />
+          </div>
+        </div>
       )}
 
       {selectedBlock && selectedGoal && (

@@ -5,13 +5,14 @@ import type {
   ActivityGoal,
   PlannedBlock,
   Settings,
-  ConflictReport,
 } from '../types'
 import { planWeek, type PlanWeekResult } from '../utils/planWeek'
 import { getWeekStartISO } from '../utils/dateUtils'
 import { parseISO, addDays } from 'date-fns'
 import { defaultSettings, createDemoData } from '../data/demoData'
 import { loadState, saveState } from '../utils/storage'
+import { expandCalendarEventsForWeek } from '../utils/recurringEvents'
+import { normalizeEventColors } from '../utils/eventColors'
 
 const initial: AppState = {
   calendarEvents: [],
@@ -24,24 +25,50 @@ const initial: AppState = {
   scheduleVersion: 0,
 }
 
+function parseWeekStart(weekStart: string): Date {
+  const [y, m, d] = weekStart.split('-').map(Number)
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
+}
+
+function eventOverlapsRange(event: CalendarEvent, rangeStart: Date, rangeEnd: Date): boolean {
+  const start = parseISO(event.start)
+  const end = parseISO(event.end)
+  return start < rangeEnd && end > rangeStart
+}
+
+function normalizeSettings(settings?: Settings): Settings {
+  // Säkerställer bakåtkompatibilitet när nya fält läggs till i Settings.
+  return {
+    ...defaultSettings,
+    ...settings,
+    workHours: {
+      ...defaultSettings.workHours,
+      ...(settings?.workHours ?? {}),
+    },
+    sleepWindow: {
+      ...defaultSettings.sleepWindow,
+      ...(settings?.sleepWindow ?? {}),
+    },
+    officeDays: settings?.officeDays ?? defaultSettings.officeDays,
+    eventColors: normalizeEventColors(settings?.eventColors),
+  }
+}
+
 export function useStore() {
   const [state, setState] = useState<AppState>(() => {
     const loaded = loadState()
-    if (loaded) return loaded
+    if (loaded) return { ...loaded, settings: normalizeSettings(loaded.settings) }
     const demo = createDemoData()
-    return { ...initial, ...demo }
+    return { ...initial, ...demo, settings: normalizeSettings(initial.settings) }
   })
 
+  // Används i callbacks för att alltid läsa senaste state utan stale closures.
   const stateRef = useRef(state)
   stateRef.current = state
 
   useEffect(() => {
     saveState(state)
   }, [state])
-
-  const setCurrentWeekStart = useCallback((weekStart: string) => {
-    setState((s) => ({ ...s, currentWeekStart: weekStart }))
-  }, [])
 
   const addCalendarEvent = useCallback((event: CalendarEvent) => {
     setState((s) => ({
@@ -55,6 +82,43 @@ export function useStore() {
     setState((s) => ({
       ...s,
       calendarEvents: [...s.calendarEvents, ...events],
+    }))
+  }, [])
+
+  const replaceGoogleCalendarEventsForWeek = useCallback(
+    (weekStart: string, googleEvents: CalendarEvent[]) => {
+      const rangeStart = parseWeekStart(weekStart)
+      const rangeEnd = addDays(rangeStart, 7)
+      setState((s) => {
+        const keep = s.calendarEvents.filter(
+          (e) => !(e.source === 'google' && eventOverlapsRange(e, rangeStart, rangeEnd))
+        )
+
+        // Dedupe mellan befintliga event och ny Google-import för samma vecka.
+        const keyOf = (e: CalendarEvent) =>
+          `${e.title.trim().toLowerCase()}|${e.start}|${e.end}`
+        const existing = new Set(keep.map(keyOf))
+        const dedupedNew: CalendarEvent[] = []
+        for (const e of googleEvents) {
+          const key = keyOf(e)
+          if (existing.has(key)) continue
+          existing.add(key)
+          dedupedNew.push(e)
+        }
+
+        return {
+          ...s,
+          calendarEvents: [...keep, ...dedupedNew],
+        }
+      })
+    },
+    []
+  )
+
+  const clearGoogleCalendarEvents = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      calendarEvents: s.calendarEvents.filter((e) => e.source !== 'google'),
     }))
   }, [])
 
@@ -93,14 +157,6 @@ export function useStore() {
     }))
   }, [])
 
-  const setPlannedBlocks = useCallback((blocks: PlannedBlock[]) => {
-    setState((s) => ({
-      ...s,
-      plannedBlocks: blocks,
-      scheduleVersion: s.scheduleVersion + 1,
-    }))
-  }, [])
-
   const updatePlannedBlock = useCallback(
     (id: string, updates: Partial<PlannedBlock>) => {
       setState((s) => ({
@@ -114,11 +170,7 @@ export function useStore() {
   )
 
   const setSettings = useCallback((settings: Settings) => {
-    setState((s) => ({ ...s, settings }))
-  }, [])
-
-  const setConflictReports = useCallback((reports: ConflictReport[]) => {
-    setState((s) => ({ ...s, conflictReports: reports }))
+    setState((s) => ({ ...s, settings: normalizeSettings(settings) }))
   }, [])
 
   const setMinimumViableDay = useCallback((on: boolean) => {
@@ -128,12 +180,12 @@ export function useStore() {
   const runPlanWeek = useCallback((forWeekStart?: string) => {
     const s = stateRef.current
     const weekStartStr = forWeekStart ?? s.currentWeekStart
-    const [y, m, d] = weekStartStr.split('-').map(Number)
-    const weekStartDate = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
+    const weekStartDate = parseWeekStart(weekStartStr)
+    const weekCalendarEvents = expandCalendarEventsForWeek(s.calendarEvents, weekStartStr)
     try {
       const result: PlanWeekResult = planWeek(
         s.goals,
-        s.calendarEvents,
+        weekCalendarEvents,
         s.plannedBlocks,
         s.settings,
         weekStartDate,
@@ -178,23 +230,22 @@ export function useStore() {
   }, [state.currentWeekStart])
 
   const replaceState = useCallback((newState: AppState) => {
-    setState(newState)
+    setState({ ...newState, settings: normalizeSettings(newState.settings) })
   }, [])
 
   return {
     state,
-    setCurrentWeekStart,
     addCalendarEvent,
     addCalendarEvents,
+    replaceGoogleCalendarEventsForWeek,
+    clearGoogleCalendarEvents,
     updateCalendarEvent,
     removeCalendarEvent,
     addGoal,
     updateGoal,
     removeGoal,
-    setPlannedBlocks,
     updatePlannedBlock,
     setSettings,
-    setConflictReports,
     setMinimumViableDay,
     runPlanWeek,
     goToNextWeek,

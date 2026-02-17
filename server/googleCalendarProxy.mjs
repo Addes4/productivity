@@ -22,12 +22,13 @@ function loadEnvFile(filePath) {
 loadEnvFile(path.join(process.cwd(), '.env.server'))
 
 const PORT = Number(process.env.CALENDAR_SERVER_PORT || 8787)
+const HOST = process.env.CALENDAR_SERVER_HOST || '127.0.0.1'
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || ''
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || ''
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ||
-  `http://localhost:${PORT}/api/google-calendar/auth/callback`
+  `http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}/api/google-calendar/auth/callback`
 const TOKEN_ENCRYPTION_SECRET = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY || ''
 
 const OAUTH_SESSION_COOKIE = 'gc_oauth_session'
@@ -240,10 +241,11 @@ function parseDateOnly(dateStr) {
   return new Date(y, mo - 1, d, 0, 0, 0, 0)
 }
 
-function normalizeGoogleEvent(item) {
+function normalizeGoogleEvent(item, category = 'Google') {
   if (!item || item.status === 'cancelled') return null
   let start = null
   let end = null
+  const isAllDay = Boolean(item.start?.date && item.end?.date)
 
   if (item.start?.dateTime) {
     start = new Date(item.start.dateTime)
@@ -269,7 +271,8 @@ function normalizeGoogleEvent(item) {
     title: item.summary || 'Google-bokning',
     start: start.toISOString(),
     end: end.toISOString(),
-    category: 'Google',
+    allDay: isAllDay,
+    category,
   }
 }
 
@@ -292,37 +295,79 @@ async function fetchGoogleEvents(accessToken, weekStartRaw) {
   const { start, end } = getWeekRange(weekStartRaw)
   const warnings = []
   const events = []
-  let pageToken = null
-  let pages = 0
 
-  while (pages < 10) {
-    const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
-    url.searchParams.set('singleEvents', 'true')
-    url.searchParams.set('orderBy', 'startTime')
-    url.searchParams.set('timeMin', start.toISOString())
-    url.searchParams.set('timeMax', end.toISOString())
-    url.searchParams.set('maxResults', '2500')
-    if (pageToken) url.searchParams.set('pageToken', pageToken)
-
-    const response = await fetch(url, {
+  const googleGetJson = async (urlObj) => {
+    const response = await fetch(urlObj, {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
     if (!response.ok) {
       const txt = await response.text()
       throw new Error(`Google API fel (${response.status}): ${txt.slice(0, 140)}`)
     }
-    const data = await response.json()
-    for (const item of data.items || []) {
-      const normalized = normalizeGoogleEvent(item)
-      if (normalized) events.push(normalized)
-    }
-    pageToken = data.nextPageToken || null
-    pages += 1
-    if (!pageToken) break
+    return response.json()
   }
 
-  if (pageToken) {
-    warnings.push('Alla sidor kunde inte hämtas (sidgräns nådd).')
+  // Hämta kalendrar användaren har valda i Google Calendar (inte bara primary).
+  const calendars = []
+  let calendarPageToken = null
+  for (let page = 0; page < 10; page++) {
+    const listUrl = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList')
+    listUrl.searchParams.set('maxResults', '250')
+    if (calendarPageToken) listUrl.searchParams.set('pageToken', calendarPageToken)
+    const data = await googleGetJson(listUrl)
+    for (const cal of data.items || []) {
+      if (cal.selected === false) continue
+      if (cal.accessRole === 'none') continue
+      if (!cal.id) continue
+      calendars.push({
+        id: cal.id,
+        summary: cal.summary || 'Google',
+      })
+    }
+    calendarPageToken = data.nextPageToken || null
+    if (!calendarPageToken) break
+  }
+
+  if (calendars.length === 0) {
+    warnings.push('Inga valda Google-kalendrar hittades för kontot.')
+    return { events, warnings }
+  }
+
+  const calendarsToFetch = calendars.slice(0, 20)
+  if (calendars.length > calendarsToFetch.length) {
+    warnings.push('Många kalendrar hittades; bara de första 20 synkades.')
+  }
+
+  for (const cal of calendarsToFetch) {
+    let pageToken = null
+    let pages = 0
+    while (pages < 10) {
+      const url = new URL(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events`
+      )
+      url.searchParams.set('singleEvents', 'true')
+      url.searchParams.set('orderBy', 'startTime')
+      url.searchParams.set('timeMin', start.toISOString())
+      url.searchParams.set('timeMax', end.toISOString())
+      url.searchParams.set('maxResults', '2500')
+      if (pageToken) url.searchParams.set('pageToken', pageToken)
+
+      const data = await googleGetJson(url)
+      for (const item of data.items || []) {
+        const category =
+          cal.summary && cal.summary.toLowerCase() !== 'primary'
+            ? `Google: ${cal.summary}`
+            : 'Google'
+        const normalized = normalizeGoogleEvent(item, category)
+        if (normalized) events.push(normalized)
+      }
+      pageToken = data.nextPageToken || null
+      pages += 1
+      if (!pageToken) break
+    }
+    if (pageToken) {
+      warnings.push(`Alla events kunde inte hämtas för kalendern "${cal.summary}".`)
+    }
   }
 
   return { events, warnings }
@@ -527,7 +572,7 @@ async function startServer() {
         return
       }
 
-      const urlObj = new URL(req.url || '/', `http://${req.headers.host || `localhost:${PORT}`}`)
+      const urlObj = new URL(req.url || '/', `http://${req.headers.host || `${HOST}:${PORT}`}`)
       const pathname = urlObj.pathname
 
       if (req.method === 'GET' && pathname === '/api/google-calendar/auth/start') {
@@ -558,10 +603,10 @@ async function startServer() {
     }
   })
 
-  server.listen(PORT, () => {
+  server.listen(PORT, HOST, () => {
     // eslint-disable-next-line no-console
     console.log(
-      `[google-calendar-proxy] Listening on http://localhost:${PORT} (frontend: ${FRONTEND_ORIGIN})`
+      `[google-calendar-proxy] Listening on http://${HOST}:${PORT} (frontend: ${FRONTEND_ORIGIN})`
     )
   })
 }

@@ -29,6 +29,7 @@ import {
   parseTime,
   getFreeSlotsForDay,
 } from './dateUtils'
+import { isWeekNumberEvent } from './calendarEventUtils'
 
 const MINI_SESSION_MINUTES = 10
 
@@ -52,7 +53,6 @@ function overlapsInterval(
 /** Bygger blockerade tider för en dag: events + låsta block + sleep + (valfritt) utanför workHours */
 function getBlockedIntervalsForDay(
   day: Date,
-  _weekStart: Date,
   calendarEvents: CalendarEvent[],
   lockedBlocks: PlannedBlock[],
   settings: Settings,
@@ -86,6 +86,7 @@ function getBlockedIntervalsForDay(
 
   // Calendar events som överlappar denna dag
   for (const e of calendarEvents) {
+    if (isWeekNumberEvent(e)) continue
     const start = toDate(e.start)
     const end = toDate(e.end)
     if (end <= start) continue
@@ -236,7 +237,6 @@ export function planWeek(
       i,
       getBlockedIntervalsForDay(
         day,
-        weekStart,
         calendarEvents,
         lockedBlocks,
         settings,

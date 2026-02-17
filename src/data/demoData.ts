@@ -1,6 +1,7 @@
 import type { CalendarEvent, ActivityGoal, Settings } from '../types'
 import { getWeekStart, getWeekStartISO } from '../utils/dateUtils'
 import { addDays, setHours, setMinutes } from 'date-fns'
+import { DEFAULT_EVENT_COLORS } from '../utils/eventColors'
 
 const WEEKDAYS: (0 | 1 | 2 | 3 | 4 | 5 | 6)[] = [1, 2, 3, 4, 5]
 
@@ -20,6 +21,7 @@ export const defaultSettings: Settings = {
   maxActivitiesPerDay: 5,
   officeDays: [1, 2, 3],
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  eventColors: DEFAULT_EVENT_COLORS,
 }
 
 function createDemoEvents(weekStart: Date): CalendarEvent[] {

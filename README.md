@@ -30,6 +30,7 @@ npm run dev
 ```
 
 Frontend anropar backend via `/api/*` (Vite-proxy), och refresh tokens lagras krypterat i `server/data/google-connections.json`.
+Om du får `ECONNREFUSED` på `/api/*`, kontrollera att backend faktiskt kör på `127.0.0.1:8787` och starta om båda processerna.
 
 ## Så funkar det
 

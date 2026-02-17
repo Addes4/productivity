@@ -1,6 +1,8 @@
 import { useDroppable } from '@dnd-kit/core'
 import { parseISO, setHours, setMinutes, setSeconds, setMilliseconds, addHours } from 'date-fns'
-import type { CalendarEvent, PlannedBlock, ActivityGoal } from '../types'
+import type { CalendarEvent, PlannedBlock, ActivityGoal, EventColors } from '../types'
+import { isAllDayEventRange } from '../utils/dateUtils'
+import { getEventSourceColor } from '../utils/eventColors'
 import { CalendarBlock } from './CalendarBlock'
 
 export type OnBlockClick = (block: PlannedBlock, goal: ActivityGoal) => void
@@ -46,9 +48,10 @@ export function CalendarColumn({
   calendarEvents,
   plannedBlocks,
   getGoal,
+  eventColors,
   categoryFilter,
   onBlockClick,
-  onBlockStatusChange,
+  onCalendarEventClick,
 }: {
   day: Date
   hour: number
@@ -58,9 +61,10 @@ export function CalendarColumn({
   calendarEvents: CalendarEvent[]
   plannedBlocks: PlannedBlock[]
   getGoal: (id: string) => ActivityGoal | undefined
+  eventColors: EventColors
   categoryFilter: string[]
   onBlockClick?: OnBlockClick
-  onBlockStatusChange?: (blockId: string, status: 'done' | 'missed' | 'partial') => void
+  onCalendarEventClick?: (event: CalendarEvent) => void
 }) {
   const slotId = `col-${day.toISOString()}-${hour}`
   const { setNodeRef, isOver } = useDroppable({ id: slotId })
@@ -78,16 +82,31 @@ export function CalendarColumn({
         if (!showCategory(ev.category)) return null
         const start = parseISO(ev.start)
         const end = parseISO(ev.end)
+        if (ev.allDay === true || isAllDayEventRange(start, end)) return null
         const pos = getRenderPosition(start, end, day, hour, hourHeight, firstHour, lastHour)
         if (!pos) return null
+        const accentColor = getEventSourceColor(ev.source, eventColors)
         return (
-          <div
+          <button
+            type="button"
             key={ev.id}
-            className="absolute left-1 right-1 rounded-xl bg-slate-100 border border-slate-300/80 text-xs p-2 overflow-hidden shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
-            style={{ top: pos.top, height: Math.max(8, pos.height - 2), zIndex: 20 }}
+            className="absolute left-1 right-1 rounded-xl border text-xs p-2 overflow-hidden shadow-[0_1px_2px_rgba(15,23,42,0.08)] transition-colors text-left cursor-pointer hover:brightness-[0.98]"
+            style={{
+              top: pos.top,
+              height: Math.max(8, pos.height - 2),
+              zIndex: 20,
+              backgroundColor: `${accentColor}1f`,
+              borderColor: `${accentColor}cc`,
+              borderLeftColor: accentColor,
+              borderLeftWidth: 4,
+            }}
+            onClick={(e) => {
+              e.stopPropagation()
+              onCalendarEventClick?.(ev)
+            }}
           >
             <span className="font-medium text-slate-700">{ev.title}</span>
-          </div>
+          </button>
         )
       })}
       {plannedBlocks.map((block) => {
@@ -105,7 +124,6 @@ export function CalendarColumn({
             top={pos.top}
             height={pos.height}
             onBlockClick={onBlockClick}
-            onStatusChange={onBlockStatusChange}
           />
         )
       })}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Settings, DayOfWeek } from '../types'
+import { normalizeEventColors } from '../utils/eventColors'
 
 const DAY_LABELS: { value: DayOfWeek; label: string }[] = [
   { value: 0, label: 'Sön' },
@@ -30,6 +31,9 @@ export function SettingsPanel({
   const [sleepEnd, setSleepEnd] = useState(settings.sleepWindow.end)
   const [sleepDays, setSleepDays] = useState<DayOfWeek[]>(settings.sleepWindow.days)
   const [officeDays, setOfficeDays] = useState<DayOfWeek[]>(settings.officeDays)
+  const [manualColor, setManualColor] = useState(settings.eventColors.manual)
+  const [importColor, setImportColor] = useState(settings.eventColors.import)
+  const [googleColor, setGoogleColor] = useState(settings.eventColors.google)
 
   const toggleWorkDay = (d: DayOfWeek) => {
     setWorkDays((prev) =>
@@ -48,6 +52,12 @@ export function SettingsPanel({
   }
 
   const handleSave = () => {
+    const nextEventColors = normalizeEventColors({
+      manual: manualColor,
+      import: importColor,
+      google: googleColor,
+    })
+
     onSave({
       ...settings,
       workHours: {
@@ -60,6 +70,7 @@ export function SettingsPanel({
       minBreakMinutes: minBreak,
       maxActivitiesPerDay: maxPerDay,
       officeDays,
+      eventColors: nextEventColors,
     })
     onClose()
   }
@@ -190,6 +201,39 @@ export function SettingsPanel({
               {label}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="pt-2">
+        <h3 className="font-semibold text-slate-800 mb-2">Färger för bokningar</h3>
+        <div className="space-y-2">
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-700">Manuell bokning</span>
+            <input
+              type="color"
+              value={manualColor}
+              onChange={(e) => setManualColor(e.target.value)}
+              className="h-8 w-12 rounded border border-slate-300 bg-white p-0.5"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-700">Importerad (iCal)</span>
+            <input
+              type="color"
+              value={importColor}
+              onChange={(e) => setImportColor(e.target.value)}
+              className="h-8 w-12 rounded border border-slate-300 bg-white p-0.5"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-700">Google Calendar</span>
+            <input
+              type="color"
+              value={googleColor}
+              onChange={(e) => setGoogleColor(e.target.value)}
+              className="h-8 w-12 rounded border border-slate-300 bg-white p-0.5"
+            />
+          </label>
         </div>
       </div>
 

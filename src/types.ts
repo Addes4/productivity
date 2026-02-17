@@ -6,7 +6,7 @@
  * Settings = globala inställningar.
  */
 
-export type EventSource = 'manual' | 'import'
+export type EventSource = 'manual' | 'import' | 'google'
 
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6 // 0 = söndag
 
@@ -23,6 +23,11 @@ export interface CalendarEvent {
   title: string
   start: string // ISO datetime
   end: string
+  allDay?: boolean
+  recurrenceDays?: DayOfWeek[] // veckovis återkommande på valda veckodagar
+  recurrenceExDates?: string[] // lokala datum-nycklar ("yyyy-MM-dd") som ska hoppas över
+  recurrenceParentId?: string // används endast för renderade instanser
+  recurrenceInstanceDate?: string // används endast för renderade instanser
   source: EventSource
   locked: boolean
   category: string
@@ -72,6 +77,12 @@ export interface WorkHours {
   enabled: boolean
 }
 
+export interface EventColors {
+  manual: string
+  import: string
+  google: string
+}
+
 export interface Settings {
   workHours: WorkHours
   sleepWindow: SleepWindow
@@ -79,6 +90,7 @@ export interface Settings {
   maxActivitiesPerDay: number
   officeDays: DayOfWeek[]
   timezone: string
+  eventColors: EventColors
 }
 
 export interface ConflictReport {

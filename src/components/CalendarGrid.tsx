@@ -6,10 +6,12 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { parseISO, format, differenceInMinutes } from 'date-fns'
+import { parseISO, format, differenceInMinutes, getISOWeek } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import type { CalendarEvent, PlannedBlock, ActivityGoal, Settings } from '../types'
-import { getWeekDates } from '../utils/dateUtils'
+import { doesRangeOverlapDay, getWeekDates, isAllDayEventRange } from '../utils/dateUtils'
+import { isWeekNumberEvent } from '../utils/calendarEventUtils'
+import { getEventSourceColor } from '../utils/eventColors'
 import { CalendarColumn, type OnBlockClick } from './CalendarColumn'
 
 const HOUR_HEIGHT = 52
@@ -24,7 +26,7 @@ export interface CalendarGridProps {
   settings: Settings
   onBlockMove?: (blockId: string, newStart: string, newEnd: string) => void
   onBlockClick?: OnBlockClick
-  onBlockStatusChange?: (blockId: string, status: 'done' | 'missed' | 'partial') => void
+  onCalendarEventClick?: (event: CalendarEvent) => void
   onAddEvent?: () => void
   categoryFilter?: string[]
 }
@@ -37,11 +39,12 @@ export function CalendarGrid({
   settings,
   onBlockMove,
   onBlockClick,
-  onBlockStatusChange,
+  onCalendarEventClick,
   onAddEvent,
   categoryFilter = [],
 }: CalendarGridProps) {
   const weekStartDate = parseISO(weekStart)
+  const isoWeekNumber = getISOWeek(weekStartDate)
   const weekDates = getWeekDates(weekStartDate)
 
   const getGoal = useCallback(
@@ -53,6 +56,35 @@ export function CalendarGrid({
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
     })
+  )
+
+  const visibleCalendarEvents = calendarEvents.filter((event) => !isWeekNumberEvent(event))
+
+  const calendarEventRanges = visibleCalendarEvents.map((event) => {
+    const start = parseISO(event.start)
+    const end = parseISO(event.end)
+    return {
+      event,
+      start,
+      end,
+      isAllDay: event.allDay === true || isAllDayEventRange(start, end),
+    }
+  })
+
+  const timedCalendarEvents = calendarEventRanges
+    .filter((entry) => !entry.isAllDay)
+    .map((entry) => entry.event)
+
+  const showCategory = (cat: string) =>
+    categoryFilter.length === 0 || categoryFilter.includes(cat)
+
+  const allDayEventsByDay = weekDates.map((day) =>
+    calendarEventRanges
+      .filter(
+        ({ event, start, end, isAllDay }) =>
+          isAllDay && showCategory(event.category) && doesRangeOverlapDay(start, end, day)
+      )
+      .map(({ event }) => event)
   )
 
   const handleDragEnd = useCallback(
@@ -111,9 +143,12 @@ export function CalendarGrid({
   for (let h = FIRST_HOUR; h <= LAST_HOUR; h++) hours.push(h)
 
   return (
-    <div className="flex flex-col rounded-2xl border border-slate-200/90 bg-white/95 shadow-[0_10px_30px_rgba(15,23,42,0.08)] overflow-hidden">
+    <div className="flex flex-col min-h-0 xl:h-full rounded-2xl border border-slate-200/90 bg-white/95 shadow-[0_10px_30px_rgba(15,23,42,0.08)] overflow-hidden">
       <div className="grid grid-cols-[64px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100/70 sticky top-0 z-10">
-        <div className="p-3 text-xs font-semibold text-slate-500 tracking-wide">TID</div>
+        <div className="p-2 flex flex-col justify-center text-left leading-tight">
+          <span className="text-[10px] font-semibold text-slate-500 tracking-wide uppercase">Tid</span>
+          <span className="text-sm font-bold text-slate-700 tabular-nums">v{isoWeekNumber}</span>
+        </div>
         {weekDates.map((d) => (
           <div
             key={d.toISOString()}
@@ -126,8 +161,50 @@ export function CalendarGrid({
         ))}
       </div>
 
+      <div className="grid grid-cols-[64px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50/70">
+        <div className="px-2 py-2 text-[10px] font-semibold text-slate-500 tracking-wide uppercase">
+          Heldag
+        </div>
+        {weekDates.map((day, dayIndex) => {
+          const dayEvents = allDayEventsByDay[dayIndex]
+          const firstEvent = dayEvents[0]
+          const accentColor = firstEvent
+            ? getEventSourceColor(firstEvent.source, settings.eventColors)
+            : null
+          return (
+            <div
+              key={`${day.toISOString()}-all-day`}
+              className="border-l border-slate-200/80 px-1.5 py-1.5 h-9 flex items-center"
+            >
+              {firstEvent ? (
+                <div className="w-full flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onCalendarEventClick?.(firstEvent)}
+                    className="h-5 leading-5 px-2 rounded-md border text-[11px] font-medium text-slate-800 truncate flex-1 min-w-0 text-left cursor-pointer transition-colors hover:brightness-[0.98]"
+                    style={{
+                      backgroundColor: accentColor ? `${accentColor}1f` : undefined,
+                      borderColor: accentColor ? `${accentColor}cc` : undefined,
+                      borderLeftColor: accentColor ?? undefined,
+                      borderLeftWidth: accentColor ? 3 : undefined,
+                    }}
+                  >
+                    {firstEvent.title}
+                  </button>
+                  {dayEvents.length > 1 ? (
+                    <span className="text-[10px] font-semibold text-slate-500 shrink-0">
+                      +{dayEvents.length - 1}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        <div className="flex-1 overflow-auto bg-white" style={{ minHeight: (LAST_HOUR - FIRST_HOUR + 1) * HOUR_HEIGHT }}>
+        <div className="flex-1 min-h-0 overflow-auto bg-white" style={{ minHeight: (LAST_HOUR - FIRST_HOUR + 1) * HOUR_HEIGHT }}>
           {hours.map((hour) => (
             <div
               key={hour}
@@ -145,12 +222,13 @@ export function CalendarGrid({
                   hourHeight={HOUR_HEIGHT}
                   firstHour={FIRST_HOUR}
                   lastHour={LAST_HOUR}
-                  calendarEvents={calendarEvents}
+                  calendarEvents={timedCalendarEvents}
                   plannedBlocks={plannedBlocks}
                   getGoal={getGoal}
+                  eventColors={settings.eventColors}
                   categoryFilter={categoryFilter}
                   onBlockClick={onBlockClick}
-                  onBlockStatusChange={onBlockStatusChange}
+                  onCalendarEventClick={onCalendarEventClick}
                 />
               ))}
             </div>

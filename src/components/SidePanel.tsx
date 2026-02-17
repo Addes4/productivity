@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
-import type { ActivityGoal, Settings, PlannedBlock } from '../types'
+import type { ActivityGoal, PlannedBlock } from '../types'
 import { GoalForm } from './GoalForm'
-import { SettingsPanel } from './SettingsPanel'
 import { PlanButtons } from './PlanButtons'
 import { ProgressBars } from './ProgressBars'
 
@@ -14,7 +13,6 @@ interface CalendarImportResult {
 export function SidePanel({
   goals,
   plannedBlocks,
-  settings,
   minimumViableDay,
   conflictReports,
   editingGoalId,
@@ -24,7 +22,6 @@ export function SidePanel({
   onRemoveGoal,
   onPlanWeek,
   onToggleMVD,
-  onSaveSettings,
   onExport,
   onImport,
   onImportIcsText,
@@ -36,7 +33,6 @@ export function SidePanel({
 }: {
   goals: ActivityGoal[]
   plannedBlocks: PlannedBlock[]
-  settings: Settings
   minimumViableDay: boolean
   conflictReports: { goalId: string; reason: string; suggestion?: string }[]
   editingGoalId: string | null
@@ -46,7 +42,6 @@ export function SidePanel({
   onRemoveGoal: (id: string) => void
   onPlanWeek: () => void
   onToggleMVD: (on: boolean) => void
-  onSaveSettings: (s: Settings) => void
   onExport: () => void
   onImport: (json: string) => void
   onImportIcsText: (icsText: string) => CalendarImportResult
@@ -58,7 +53,6 @@ export function SidePanel({
 }) {
   const [editingGoal, setEditingGoal] = useState<ActivityGoal | null>(null)
   const [showForm, setShowForm] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
   const [importStatus, setImportStatus] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importingGoogle, setImportingGoogle] = useState(false)
@@ -173,7 +167,7 @@ export function SidePanel({
   }
 
   return (
-    <aside className="w-full max-w-none xl:max-w-md flex flex-col bg-white/95 border border-slate-200 rounded-2xl shadow-[0_10px_30px_rgba(15,23,42,0.08)] overflow-hidden">
+    <aside className="w-full max-w-none xl:max-w-md xl:h-full flex flex-col bg-white/95 border border-slate-200 rounded-2xl shadow-[0_10px_30px_rgba(15,23,42,0.08)] overflow-hidden">
       <div className="p-4 overflow-auto flex-1 space-y-6">
         {/* Så funkar det */}
         <section className="rounded-xl bg-gradient-to-br from-sky-50 to-cyan-50 border border-sky-100 p-4 text-sm text-sky-900">
@@ -253,26 +247,6 @@ export function SidePanel({
           </ul>
         </section>
 
-        {/* Globala inställningar */}
-        <section>
-          <button
-            type="button"
-            onClick={() => setShowSettings(true)}
-            className="text-sm font-medium text-slate-700 hover:text-indigo-600"
-          >
-            ⚙ Globala inställningar
-          </button>
-          {showSettings && (
-            <div className="mt-2 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
-              <SettingsPanel
-                settings={settings}
-                onSave={onSaveSettings}
-                onClose={() => setShowSettings(false)}
-              />
-            </div>
-          )}
-        </section>
-
         {/* Planera-knappar */}
         <section>
           <PlanButtons
@@ -332,6 +306,9 @@ export function SidePanel({
                 <p className="text-xs text-emerald-700">
                   Ansluten{googleCalendarEmail ? ` som ${googleCalendarEmail}` : ''}.
                 </p>
+                <p className="text-xs text-slate-500">
+                  Kalendern synkas automatiskt för vald vecka. Du kan även synka manuellt.
+                </p>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -339,7 +316,7 @@ export function SidePanel({
                     disabled={importingGoogle}
                     className="px-3 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {importingGoogle ? 'Importerar...' : 'Importera Google-kalender'}
+                    {importingGoogle ? 'Synkar...' : 'Synka nu'}
                   </button>
                   <button
                     type="button"
