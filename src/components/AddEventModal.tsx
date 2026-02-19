@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CalendarEvent, DayOfWeek } from '../types'
 
+// Veckodagsknappar för återkommande bokningar.
 const DAY_OPTIONS: { day: DayOfWeek; label: string }[] = [
   { day: 1, label: 'Mån' },
   { day: 2, label: 'Tis' },
@@ -11,6 +12,7 @@ const DAY_OPTIONS: { day: DayOfWeek; label: string }[] = [
   { day: 0, label: 'Sön' },
 ]
 
+// Formatteringshjälpare för date/time inputs.
 function pad2(value: number): string {
   return String(value).padStart(2, '0')
 }
@@ -25,11 +27,13 @@ function toTimeInputValue(iso: string): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
+// Hämtar veckodag från lokalt datum för default-val vid "återkommande".
 function parseLocalDayOfWeek(dateValue: string): DayOfWeek {
   const [y, mo, d] = dateValue.split('-').map(Number)
   return new Date(y, (mo ?? 1) - 1, d ?? 1, 12, 0, 0, 0).getDay() as DayOfWeek
 }
 
+// Validerar, deduplicerar och sorterar daglista (mån -> sön).
 function normalizeRecurringDays(days: DayOfWeek[]): DayOfWeek[] {
   const uniq = Array.from(new Set(days)).filter(
     (day): day is DayOfWeek => Number.isInteger(day) && day >= 0 && day <= 6
@@ -37,6 +41,7 @@ function normalizeRecurringDays(days: DayOfWeek[]): DayOfWeek[] {
   return uniq.sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
 }
 
+// Modal för att skapa/redigera bokningar (inkl. återkommande).
 export function AddEventModal({
   weekStart,
   existingEvent,
@@ -46,10 +51,14 @@ export function AddEventModal({
 }: {
   weekStart: string
   existingEvent?: CalendarEvent | null
-  onSave: (event: Omit<CalendarEvent, 'id'>, existingId?: string) => void
+  onSave: (
+    event: Omit<CalendarEvent, 'id'>,
+    existingId?: string
+  ) => { ok: true } | { ok: false; error: string }
   onDelete?: (event: CalendarEvent) => void
   onClose: () => void
 }) {
+  // Form state (initialiseras från existingEvent om vi redigerar).
   const [title, setTitle] = useState(existingEvent?.title ?? '')
   const [date, setDate] = useState(existingEvent ? toDateInputValue(existingEvent.start) : weekStart)
   const [startTime, setStartTime] = useState(
@@ -67,6 +76,7 @@ export function AddEventModal({
   )
   const [formError, setFormError] = useState<string | null>(null)
 
+  // Synkar formen när vi växlar mellan ny/redigera eller byter event.
   useEffect(() => {
     if (!existingEvent) {
       setTitle('')
@@ -94,6 +104,7 @@ export function AddEventModal({
     setFormError(null)
   }, [existingEvent, weekStart])
 
+  // Validerar input och skickar normalized event tillbaka till parent.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
@@ -113,7 +124,7 @@ export function AddEventModal({
       return
     }
 
-    onSave({
+    const saveResult = onSave({
       title,
       start: start.toISOString(),
       end: end.toISOString(),
@@ -124,9 +135,14 @@ export function AddEventModal({
       locked: existingEvent?.locked ?? false,
       category,
     }, existingEvent?.recurrenceParentId ?? existingEvent?.id)
+    if (!saveResult.ok) {
+      setFormError(saveResult.error)
+      return
+    }
     onClose()
   }
 
+  // Toggle av återkommande veckodagar.
   const toggleRecurringDay = (day: DayOfWeek) => {
     setRecurrenceDays((prev) => {
       const next = prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]

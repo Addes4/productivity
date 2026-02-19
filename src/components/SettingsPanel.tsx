@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Settings, DayOfWeek } from '../types'
 import { normalizeEventColors } from '../utils/eventColors'
 
+// Gemensamma dagknappar för arbetstid/sömn/kontor.
 const DAY_LABELS: { value: DayOfWeek; label: string }[] = [
   { value: 0, label: 'Sön' },
   { value: 1, label: 'Mån' },
@@ -12,6 +13,7 @@ const DAY_LABELS: { value: DayOfWeek; label: string }[] = [
   { value: 6, label: 'Lör' },
 ]
 
+// Modalinnehåll för globala appinställningar.
 export function SettingsPanel({
   settings,
   onSave,
@@ -21,6 +23,7 @@ export function SettingsPanel({
   onSave: (s: Settings) => void
   onClose: () => void
 }) {
+  // Lokalt formulärstate för alla inställningsfält.
   const [workEnabled, setWorkEnabled] = useState(settings.workHours.enabled)
   const [workStart, setWorkStart] = useState(settings.workHours.start)
   const [workEnd, setWorkEnd] = useState(settings.workHours.end)
@@ -35,6 +38,7 @@ export function SettingsPanel({
   const [importColor, setImportColor] = useState(settings.eventColors.import)
   const [googleColor, setGoogleColor] = useState(settings.eventColors.google)
 
+  // Toggle-funktioner för daglistor.
   const toggleWorkDay = (d: DayOfWeek) => {
     setWorkDays((prev) =>
       prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)
@@ -51,6 +55,7 @@ export function SettingsPanel({
     )
   }
 
+  // Normaliserar färger och skickar upp hela settings-objektet till store.
   const handleSave = () => {
     const nextEventColors = normalizeEventColors({
       manual: manualColor,

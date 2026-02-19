@@ -1,5 +1,6 @@
 import { addDays, addMinutes } from 'date-fns'
 
+// Enkel iCal-parser som extraherar event för import till appens modell.
 export interface ParsedIcsEvent {
   title: string
   start: string
@@ -18,6 +19,7 @@ interface ParsedProperty {
   value: string
 }
 
+// Avkodar escaped text enligt iCal-konvention.
 function decodeIcsText(value: string): string {
   return value
     .replace(/\\\\/g, '\\')
@@ -27,6 +29,7 @@ function decodeIcsText(value: string): string {
     .trim()
 }
 
+// Fäller ihop "folded lines" där en fortsättningsrad börjar med mellanslag/tab.
 function unfoldIcsLines(text: string): string[] {
   const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
   const unfolded: string[] = []
@@ -40,6 +43,7 @@ function unfoldIcsLines(text: string): string[] {
   return unfolded
 }
 
+// Parsar en property-rad som NAME;PARAM=...:VALUE.
 function parsePropertyLine(line: string): ParsedProperty | null {
   const idx = line.indexOf(':')
   if (idx <= 0) return null
@@ -58,6 +62,7 @@ function parsePropertyLine(line: string): ParsedProperty | null {
   return { name, params, value }
 }
 
+// Hämtar tidszons-offset (minuter) för ett visst datum i en given TZID.
 function parseTimeZoneOffsetMinutes(date: Date, timeZone: string): number | null {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -83,6 +88,7 @@ function parseTimeZoneOffsetMinutes(date: Date, timeZone: string): number | null
   }
 }
 
+// Konverterar lokal tid i en specifik tidszon till ett UTC-baserat Date-objekt.
 function zonedDateTimeToDate(
   y: number,
   mo: number,
@@ -102,6 +108,7 @@ function zonedDateTimeToDate(
   return new Date(utcGuess - offset2 * 60 * 1000)
 }
 
+// Tolkar iCal datumformat (DATE och DATE-TIME, med/utan TZID/Z).
 function parseIcsDateValue(value: string, params: Record<string, string>): Date | null {
   const trimmed = value.trim()
 
@@ -135,6 +142,7 @@ function parseIcsDateValue(value: string, params: Record<string, string>): Date 
   return new Date(y, mo - 1, d, h, mi, s, 0)
 }
 
+// Parsar hela .ics-innehållet och returnerar importerbara event + varningar.
 export function parseIcsCalendar(text: string): ParseIcsResult {
   const lines = unfoldIcsLines(text)
   const events: ParsedIcsEvent[] = []
@@ -150,6 +158,7 @@ export function parseIcsCalendar(text: string): ParseIcsResult {
   let hasRRule = false
 
   const resetCurrentEvent = () => {
+    // Nollställ temporära fält inför nästa VEVENT.
     startValue = null
     startParams = {}
     endValue = null
@@ -178,6 +187,7 @@ export function parseIcsCalendar(text: string): ParseIcsResult {
         if (!startDate) {
           warnings.push('Ett event hoppades över: ogiltig DTSTART.')
         } else {
+          // Fyll rimliga defaultvärden om DTEND saknas eller är ogiltig.
           if (!endDate) {
             endDate = isAllDay ? addDays(startDate, 1) : addMinutes(startDate, 60)
           }

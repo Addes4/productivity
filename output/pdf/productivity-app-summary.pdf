@@ -1,0 +1,60 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Count 1 /Kids [3 0 R] >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj
+6 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >> endobj
+7 0 obj << /Length 3388 >> stream
+q 1 1 1 rg 0 0 612 792 re f Q
+0 0 0 rg
+BT /F2 18.00 Tf 50.00 760.00 Td (Productivity App - Repo Summary) Tj ET
+BT /F3 9.50 Tf 50.00 738.00 Td (Generated on 2026-02-19 from repository evidence only) Tj ET
+BT /F2 11.50 Tf 50.00 722.00 Td (What it is) Tj ET
+BT /F1 9.50 Tf 50.00 708.00 Td (Produktivitetsplanerare is a local-first web app for weekly planning, built with React, TypeScript,) Tj ET
+BT /F1 9.50 Tf 50.00 696.00 Td (and Vite.) Tj ET
+BT /F1 9.50 Tf 50.00 684.00 Td (It schedules activity goals into free time around existing bookings and tracks completion status and) Tj ET
+BT /F1 9.50 Tf 50.00 672.00 Td (weekly outcomes.) Tj ET
+BT /F2 11.50 Tf 50.00 653.00 Td (Who it's for) Tj ET
+BT /F1 9.50 Tf 52.00 639.00 Td (- Primary user/persona \(explicit\): Not found in repo.) Tj ET
+BT /F1 9.50 Tf 52.00 627.00 Td (- Inferred from README and UI flows: people planning weekly activity goals around calendar) Tj ET
+BT /F1 9.50 Tf 64.00 615.00 Td (commitments.) Tj ET
+BT /F2 11.50 Tf 50.00 596.00 Td (What it does) Tj ET
+BT /F1 9.50 Tf 52.00 582.00 Td (- Adds manual calendar bookings and supports recurring events in the weekly calendar.) Tj ET
+BT /F1 9.50 Tf 52.00 570.00 Td (- Creates activity goals with target minutes, session length, allowed days, and priority.) Tj ET
+BT /F1 9.50 Tf 52.00 558.00 Td (- Auto-plans weekly sessions using free slots, sleep/work constraints, and conflict reporting.) Tj ET
+BT /F1 9.50 Tf 52.00 546.00 Td (- Offers "Minimum viable day" fallback with 10-minute mini sessions when weeks are full.) Tj ET
+BT /F1 9.50 Tf 52.00 534.00 Td (- Imports busy events from iCal \(.ics\) and deduplicates overlapping duplicates by key.) Tj ET
+BT /F1 9.50 Tf 52.00 522.00 Td (- Integrates Google Calendar through OAuth and a local backend proxy for secure import.) Tj ET
+BT /F1 9.50 Tf 52.00 510.00 Td (- Persists state in localStorage and supports JSON export/import backups.) Tj ET
+BT /F2 11.50 Tf 50.00 491.00 Td (How it works \(repo-backed architecture\)) Tj ET
+BT /F1 9.50 Tf 52.00 477.00 Td (- Frontend: React SPA \(src/App.tsx\) with CalendarGrid, SidePanel, settings/report/detail modals.) Tj ET
+BT /F1 9.50 Tf 52.00 465.00 Td (- State: useStore \(src/store/useStore.ts\) centralizes CRUD, planning triggers, and week) Tj ET
+BT /F1 9.50 Tf 64.00 453.00 Td (navigation.) Tj ET
+BT /F1 9.50 Tf 52.00 441.00 Td (- Planner: planWeek \(src/utils/planWeek.ts\) computes blocked intervals and places sessions by) Tj ET
+BT /F1 9.50 Tf 64.00 429.00 Td (score.) Tj ET
+BT /F1 9.50 Tf 52.00 417.00 Td (- Storage: src/utils/storage.ts saves/loads versioned app state in browser localStorage.) Tj ET
+BT /F1 9.50 Tf 52.00 405.00 Td (- Imports: src/utils/icsImport.ts parses .ics; server/googleCalendarProxy.mjs handles OAuth/API) Tj ET
+BT /F1 9.50 Tf 64.00 393.00 Td (proxy.) Tj ET
+BT /F1 9.50 Tf 52.00 381.00 Td (- Data flow: UI actions -> useStore -> planner/import helpers -> state -> localStorage -> rendered) Tj ET
+BT /F1 9.50 Tf 64.00 369.00 Td (calendar.) Tj ET
+BT /F2 11.50 Tf 50.00 350.00 Td (How to run \(minimal\)) Tj ET
+BT /F1 9.50 Tf 52.00 336.00 Td (- Install and start frontend: `npm install` then `npm run dev`.) Tj ET
+BT /F1 9.50 Tf 52.00 324.00 Td (- Open the printed Vite URL \(example: http://localhost:5173\).) Tj ET
+BT /F1 9.50 Tf 52.00 312.00 Td (- Optional Google sync: configure `.env.server`, run `npm run dev:server`, keep frontend running.) Tj ET
+endstream endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000267 00000 n 
+0000000337 00000 n 
+0000000412 00000 n 
+0000000490 00000 n 
+trailer << /Size 8 /Root 1 0 R >>
+startxref
+3930
+%%EOF

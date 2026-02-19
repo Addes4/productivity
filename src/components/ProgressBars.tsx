@@ -2,6 +2,7 @@ import type { ActivityGoal, PlannedBlock } from '../types'
 import { differenceInMinutes } from 'date-fns'
 import { parseISO } from 'date-fns'
 
+// Visar progress per mål baserat på blockstatusar för veckan.
 export function ProgressBars({
   goals,
   plannedBlocks,
@@ -13,6 +14,7 @@ export function ProgressBars({
     <div className="space-y-3">
       <h3 className="font-semibold text-slate-800">Progress per mål</h3>
       {goals.map((goal) => {
+        // Summera tid per status för målet.
         const target = goal.weeklyTargetMinutes
         const blocks = plannedBlocks.filter((b) => b.goalId === goal.id)
         const doneMinutes = blocks

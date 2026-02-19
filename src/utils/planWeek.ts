@@ -33,14 +33,17 @@ import { isWeekNumberEvent } from './calendarEventUtils'
 
 const MINI_SESSION_MINUTES = 10
 
+// ISO-sträng -> Date.
 function toDate(iso: string): Date {
   return parseISO(iso)
 }
 
+// Start på kalenderdag.
 function startOfDay(date: Date): Date {
   return setMilliseconds(setSeconds(setMinutes(setHours(date, 0), 0), 0), 0)
 }
 
+// Standardkontroll för intervallöverlappning.
 function overlapsInterval(
   start: Date,
   end: Date,
@@ -211,6 +214,7 @@ export function planWeek(
   weekStartDate: Date,
   minimumViableDay: boolean
 ): PlanWeekResult {
+  // Normalisera så att vi alltid planerar från veckans måndag.
   const weekStart = getWeekStart(weekStartDate)
   const weekDates = getWeekDates(weekStart)
 
@@ -222,6 +226,7 @@ export function planWeek(
     (b) => !isBlockInWeek(b, weekStart)
   )
 
+  // Hjälpare för att avgöra om blocket tillhör aktuell vecka.
   function isBlockInWeek(block: PlannedBlock, start: Date): boolean {
     const d = toDate(block.start)
     return d >= start && d < addDays(start, 7)
@@ -229,6 +234,7 @@ export function planWeek(
 
   const travelBuffers = new Map<string, number>()
   goals.forEach((g) => travelBuffers.set(g.id, g.travelBufferMinutes))
+  const goalById = new Map(goals.map((g) => [g.id, g] as const))
 
   const blockedPerDay = new Map<number, { start: Date; end: Date }[]>()
   for (let i = 0; i < 7; i++) {
@@ -260,17 +266,25 @@ export function planWeek(
 
   // Per dag räknar vi antal nya block (för maxActivitiesPerDay)
   const blocksPerDay = new Array(7).fill(0)
+  // Global spärr: högst ett gym-pass per dag (även om flera gymmål finns).
+  const gymSessionsPerDay = new Array(7).fill(0)
   lockedBlocks.forEach((b) => {
     const d = toDate(b.start)
     const idx = Math.floor((d.getTime() - weekStart.getTime()) / (24 * 60 * 60 * 1000))
-    if (idx >= 0 && idx < 7) blocksPerDay[idx]++
+    if (idx >= 0 && idx < 7) {
+      blocksPerDay[idx]++
+      const blockGoal = goalById.get(b.goalId)
+      if (blockGoal?.location === 'gym') gymSessionsPerDay[idx]++
+    }
   })
 
   let idCounter = 1
+  // Lokalt unikt block-id inom en planeringskörning.
   function nextId(): string {
     return `block-${Date.now()}-${idCounter++}`
   }
 
+  // Planera mål ett i taget i prioriterad ordning.
   for (const goal of sortedGoals) {
     if (goal.isFixed) continue
     if (goal.sessionMinutes < 1) continue
@@ -288,10 +302,25 @@ export function planWeek(
     } else {
       numSessions = Math.ceil(targetMinutes / sessionLen)
     }
+    const isGymGoal = goal.location === 'gym'
+
+    // För gymmål (och mål med explicit sessionsPerWeek) tillåts max 1 pass per dag.
+    const maxSessionsPerDayForGoal =
+      isGymGoal || (goal.sessionsPerWeek != null && goal.sessionsPerWeek > 0)
+        ? 1
+        : Number.POSITIVE_INFINITY
+    const sessionsPerDayForGoal = new Array(7).fill(0)
+    lockedBlocks.forEach((b) => {
+      if (b.goalId !== goal.id) return
+      const d = toDate(b.start)
+      const idx = Math.floor((d.getTime() - weekStart.getTime()) / (24 * 60 * 60 * 1000))
+      if (idx >= 0 && idx < 7) sessionsPerDayForGoal[idx]++
+    })
 
     const placed: PlannedBlock[] = []
     let remainingToPlace = numSessions
 
+    // Försök lägga fullstora pass först.
     for (let s = 0; s < numSessions && remainingToPlace > 0; s++) {
       const slotsForGoal = getAvailableSlotsForGoal(
         weekStart,
@@ -315,6 +344,8 @@ export function planWeek(
 
       for (const { dayIndex, slot } of slotsForGoal) {
         if (blocksPerDay[dayIndex] >= maxPerDay) continue
+        if (isGymGoal && gymSessionsPerDay[dayIndex] >= 1) continue
+        if (sessionsPerDayForGoal[dayIndex] >= maxSessionsPerDayForGoal) continue
         const duration = differenceInMinutes(slot.end, slot.start)
         if (duration < sessionDuration + minBreak) continue
 
@@ -336,6 +367,8 @@ export function planWeek(
           isMini: false,
         })
         blocksPerDay[best.dayIndex]++
+        if (isGymGoal) gymSessionsPerDay[best.dayIndex]++
+        sessionsPerDayForGoal[best.dayIndex]++
 
         // Lägg till block som "upptagen" för nästa mål (respekt för minBreak)
         const blockInterval = { start, end: addMinutes(end, minBreak) }
@@ -347,6 +380,7 @@ export function planWeek(
       }
     }
 
+    // Om veckan är full: försök fylla med mini-pass (10 min).
     if (remainingToPlace > 0 && minimumViableDay) {
       const miniLen = MINI_SESSION_MINUTES
       while (remainingToPlace > 0) {
@@ -364,6 +398,8 @@ export function planWeek(
         let best: { dayIndex: number; slot: TimeSlot } | null = null
         for (const { dayIndex, slot } of miniSlots) {
           if (blocksPerDay[dayIndex] >= maxPerDay) continue
+          if (isGymGoal && gymSessionsPerDay[dayIndex] >= 1) continue
+          if (sessionsPerDayForGoal[dayIndex] >= maxSessionsPerDayForGoal) continue
           const duration = differenceInMinutes(slot.end, slot.start)
           if (duration < miniLen + minBreak) continue
           if (!best || slotScore(goal, slot, dayIndex) > slotScore(goal, best.slot, best.dayIndex)) {
@@ -383,6 +419,8 @@ export function planWeek(
             isMini: true,
           })
           blocksPerDay[best.dayIndex]++
+          if (isGymGoal) gymSessionsPerDay[best.dayIndex]++
+          sessionsPerDayForGoal[best.dayIndex]++
           const blockInterval = { start, end: addMinutes(end, minBreak) }
           const existing = blockedPerDay.get(best.dayIndex) ?? []
           blockedPerDay.set(best.dayIndex, [...existing, blockInterval])

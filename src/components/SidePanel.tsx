@@ -4,12 +4,14 @@ import { GoalForm } from './GoalForm'
 import { PlanButtons } from './PlanButtons'
 import { ProgressBars } from './ProgressBars'
 
+// Standardiserad återkoppling från importflöden (JSON/iCal/Google).
 interface CalendarImportResult {
   imported: number
   skipped: number
   warnings: string[]
 }
 
+// Högerspalten med målhantering, planering, import/export och Google-koppling.
 export function SidePanel({
   goals,
   plannedBlocks,
@@ -51,6 +53,7 @@ export function SidePanel({
   googleCalendarConnected: boolean
   googleCalendarEmail: string | null
 }) {
+  // Lokalt UI-state i panelen.
   const [editingGoal, setEditingGoal] = useState<ActivityGoal | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [importStatus, setImportStatus] = useState<string | null>(null)
@@ -58,6 +61,7 @@ export function SidePanel({
   const [importingGoogle, setImportingGoogle] = useState(false)
   const [disconnectingGoogle, setDisconnectingGoogle] = useState(false)
 
+  // Öppnar målform i redigeringsläge när ett block begär "redigera aktivitet".
   useEffect(() => {
     if (editingGoalId && goals.length) {
       const goal = goals.find((g) => g.id === editingGoalId)
@@ -69,6 +73,7 @@ export function SidePanel({
     }
   }, [editingGoalId, goals, onClearEditingGoalId])
 
+  // Skapar nytt mål eller uppdaterar befintligt mål.
   const handleSubmitGoal = (g: Omit<ActivityGoal, 'id'>) => {
     if (editingGoal) {
       onUpdateGoal(editingGoal.id, g)
@@ -84,6 +89,7 @@ export function SidePanel({
     setShowForm(false)
   }
 
+  // Import av exporterad JSON-state via filväljare.
   const handleImportClick = () => {
     const input = document.createElement('input')
     input.type = 'file'
@@ -101,12 +107,14 @@ export function SidePanel({
     input.click()
   }
 
+  // Enhetlig statusrad efter import.
   const summarizeImportResult = (result: CalendarImportResult): string => {
     const warningText =
       result.warnings.length > 0 ? ` Varningar: ${result.warnings[0]}` : ''
     return `Importerat: ${result.imported}, redan fanns: ${result.skipped}.${warningText}`
   }
 
+  // Importerar lokala iCal-filer.
   const handleIcsFileImport = () => {
     setImportError(null)
     setImportStatus(null)
@@ -133,6 +141,7 @@ export function SidePanel({
     input.click()
   }
 
+  // Manuell Google-synk.
   const handleGoogleImport = async () => {
     setImportError(null)
     setImportStatus(null)
@@ -150,6 +159,7 @@ export function SidePanel({
     }
   }
 
+  // Frånkopplar Google-konto.
   const handleGoogleDisconnect = async () => {
     setImportError(null)
     setImportStatus(null)

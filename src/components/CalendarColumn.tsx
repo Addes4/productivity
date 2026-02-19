@@ -3,14 +3,19 @@ import { parseISO, setHours, setMinutes, setSeconds, setMilliseconds, addHours }
 import type { CalendarEvent, PlannedBlock, ActivityGoal, EventColors } from '../types'
 import { isAllDayEventRange } from '../utils/dateUtils'
 import { getEventSourceColor } from '../utils/eventColors'
+import type { OverlapLayout } from '../utils/overlapLayout'
 import { CalendarBlock } from './CalendarBlock'
+import { CalendarEventBlock } from './CalendarEventBlock'
 
+// Callback när användaren klickar ett planerat block.
 export type OnBlockClick = (block: PlannedBlock, goal: ActivityGoal) => void
 
+// Skapar timslot-start med nollade minuter/sekunder/ms.
 function toHourStart(day: Date, hour: number): Date {
   return setMilliseconds(setSeconds(setMinutes(setHours(day, hour), 0), 0), 0)
 }
 
+// Beräknar position och höjd för ett block inom en specifik timrad.
 function getRenderPosition(
   start: Date,
   end: Date,
@@ -39,6 +44,7 @@ function getRenderPosition(
   return { top, height }
 }
 
+// En kalendercell för en dag+timme, inklusive bokningar och planerade block.
 export function CalendarColumn({
   day,
   hour,
@@ -50,6 +56,7 @@ export function CalendarColumn({
   getGoal,
   eventColors,
   categoryFilter,
+  overlapLayoutById,
   onBlockClick,
   onCalendarEventClick,
 }: {
@@ -63,12 +70,14 @@ export function CalendarColumn({
   getGoal: (id: string) => ActivityGoal | undefined
   eventColors: EventColors
   categoryFilter: string[]
+  overlapLayoutById: Record<string, OverlapLayout>
   onBlockClick?: OnBlockClick
   onCalendarEventClick?: (event: CalendarEvent) => void
 }) {
-  const slotId = `col-${day.toISOString()}-${hour}`
+  const slotId = `col|${day.toISOString()}|${hour}`
   const { setNodeRef, isOver } = useDroppable({ id: slotId })
 
+  // Kategorifilter delas mellan events och aktivitetsblock.
   const showCategory = (cat: string) =>
     categoryFilter.length === 0 || categoryFilter.includes(cat)
 
@@ -86,27 +95,20 @@ export function CalendarColumn({
         const pos = getRenderPosition(start, end, day, hour, hourHeight, firstHour, lastHour)
         if (!pos) return null
         const accentColor = getEventSourceColor(ev.source, eventColors)
+        const layout = overlapLayoutById[`event:${ev.id}`] ?? { column: 0, columns: 1 }
+        const leftPercent = (layout.column / layout.columns) * 100
+        const widthPercent = 100 / layout.columns
         return (
-          <button
-            type="button"
+          <CalendarEventBlock
             key={ev.id}
-            className="absolute left-1 right-1 rounded-xl border text-xs p-2 overflow-hidden shadow-[0_1px_2px_rgba(15,23,42,0.08)] transition-colors text-left cursor-pointer hover:brightness-[0.98]"
-            style={{
-              top: pos.top,
-              height: Math.max(8, pos.height - 2),
-              zIndex: 20,
-              backgroundColor: `${accentColor}1f`,
-              borderColor: `${accentColor}cc`,
-              borderLeftColor: accentColor,
-              borderLeftWidth: 4,
-            }}
-            onClick={(e) => {
-              e.stopPropagation()
-              onCalendarEventClick?.(ev)
-            }}
-          >
-            <span className="font-medium text-slate-700">{ev.title}</span>
-          </button>
+            event={ev}
+            top={pos.top}
+            height={pos.height}
+            leftPercent={leftPercent}
+            widthPercent={widthPercent}
+            accentColor={accentColor}
+            onEventClick={onCalendarEventClick}
+          />
         )
       })}
       {plannedBlocks.map((block) => {
@@ -116,6 +118,9 @@ export function CalendarColumn({
         const end = parseISO(block.end)
         const pos = getRenderPosition(start, end, day, hour, hourHeight, firstHour, lastHour)
         if (!pos) return null
+        const layout = overlapLayoutById[`block:${block.id}`] ?? { column: 0, columns: 1 }
+        const leftPercent = (layout.column / layout.columns) * 100
+        const widthPercent = 100 / layout.columns
         return (
           <CalendarBlock
             key={block.id}
@@ -123,6 +128,8 @@ export function CalendarColumn({
             goal={goal}
             top={pos.top}
             height={pos.height}
+            leftPercent={leftPercent}
+            widthPercent={widthPercent}
             onBlockClick={onBlockClick}
           />
         )

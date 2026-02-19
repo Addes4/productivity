@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ActivityGoal, DayOfWeek, Priority, PreferredTimeOfDay, Location } from '../types'
 
+// UI-labeler för dagval.
 const DAY_LABELS: { value: DayOfWeek; label: string }[] = [
   { value: 0, label: 'Sön' },
   { value: 1, label: 'Mån' },
@@ -11,10 +12,12 @@ const DAY_LABELS: { value: DayOfWeek; label: string }[] = [
   { value: 6, label: 'Lör' },
 ]
 
+// Förvalda färger för aktivitetsmål.
 const COLORS = [
   '#22c55e', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16',
 ]
 
+// Form för att skapa eller redigera ett aktivitetsmål.
 export function GoalForm({
   goal,
   onSubmit,
@@ -24,6 +27,7 @@ export function GoalForm({
   onSubmit: (g: Omit<ActivityGoal, 'id'>) => void
   onCancel: () => void
 }) {
+  // Fältstate initieras från befintligt mål vid redigering.
   const [name, setName] = useState(goal?.name ?? '')
   const [category, setCategory] = useState(goal?.category ?? '')
   const [weeklyTargetMinutes, setWeeklyTargetMinutes] = useState(goal?.weeklyTargetMinutes ?? 120)
@@ -42,12 +46,14 @@ export function GoalForm({
   const [isFixed, setIsFixed] = useState(goal?.isFixed ?? false)
   const [color, setColor] = useState(goal?.color ?? COLORS[0])
 
+  // Toggle av tillåtna veckodagar.
   const toggleDay = (d: DayOfWeek) => {
     setAllowedDays((prev) =>
       prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)
     )
   }
 
+  // Samlar ihop formulärvärden och skickar ett normaliserat målobjekt.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     onSubmit({

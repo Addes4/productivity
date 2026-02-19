@@ -5,6 +5,7 @@ import fsSync from 'node:fs'
 import path from 'node:path'
 import { URL } from 'node:url'
 
+// Minimal Node-server som hanterar Google OAuth + kalenderhämtning för frontend.
 function loadEnvFile(filePath) {
   if (!fsSync.existsSync(filePath)) return
   const raw = fsSync.readFileSync(filePath, 'utf8')
@@ -21,6 +22,7 @@ function loadEnvFile(filePath) {
 
 loadEnvFile(path.join(process.cwd(), '.env.server'))
 
+// Runtime-konfiguration (dev-defaults används om env saknas).
 const PORT = Number(process.env.CALENDAR_SERVER_PORT || 8787)
 const HOST = process.env.CALENDAR_SERVER_HOST || '127.0.0.1'
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
@@ -39,10 +41,12 @@ const STORE_PATH = path.join(process.cwd(), 'server', 'data', 'google-connection
 const oauthSessions = new Map()
 let connectionStore = { connections: {} }
 
+// Kräver att OAuth-konfiguration finns innan Google-rutter används.
 function hasGoogleConfig() {
   return Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && TOKEN_ENCRYPTION_SECRET)
 }
 
+// Deriverar 32-byte nyckel från hemlighet i env.
 function encryptionKey() {
   if (!TOKEN_ENCRYPTION_SECRET) {
     throw new Error('GOOGLE_TOKEN_ENCRYPTION_KEY saknas.')
@@ -50,6 +54,7 @@ function encryptionKey() {
   return crypto.createHash('sha256').update(TOKEN_ENCRYPTION_SECRET).digest()
 }
 
+// Krypterar text (refresh token) med AES-GCM.
 function encryptText(plain) {
   const key = encryptionKey()
   const iv = crypto.randomBytes(12)
@@ -59,6 +64,7 @@ function encryptText(plain) {
   return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`
 }
 
+// Dekrypterar text som tidigare krypterats med encryptText.
 function decryptText(payload) {
   const [ivB64, tagB64, encryptedB64] = payload.split('.')
   if (!ivB64 || !tagB64 || !encryptedB64) {
@@ -74,10 +80,12 @@ function decryptText(payload) {
   return out.toString('utf8')
 }
 
+// Slump-id för cookies/session/state.
 function randomId(size = 32) {
   return crypto.randomBytes(size).toString('hex')
 }
 
+// Cookie-parser för inkommande request header.
 function parseCookies(header) {
   if (!header) return {}
   return header.split(';').reduce((acc, part) => {
@@ -88,6 +96,7 @@ function parseCookies(header) {
   }, {})
 }
 
+// Lägg till Set-Cookie utan att skriva över redan satta cookies.
 function appendSetCookie(res, cookie) {
   const current = res.getHeader('Set-Cookie')
   if (!current) {
@@ -101,6 +110,7 @@ function appendSetCookie(res, cookie) {
   res.setHeader('Set-Cookie', [current, cookie])
 }
 
+// Serialiserar cookie med säkra standardflaggor.
 function serializeCookie(name, value, { maxAgeSeconds, httpOnly = true } = {}) {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
@@ -117,16 +127,19 @@ function clearCookie(name) {
   return serializeCookie(name, '', { maxAgeSeconds: 0 })
 }
 
+// JSON-svarshjälpare.
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(body))
 }
 
+// Enkel redirect-hjälpare.
 function redirect(res, location) {
   res.writeHead(302, { Location: location })
   res.end()
 }
 
+// Tillåter redirect enbart tillbaka till frontend-origin.
 function sanitizeReturnTo(returnToRaw) {
   if (!returnToRaw) return FRONTEND_ORIGIN
   try {
@@ -138,12 +151,14 @@ function sanitizeReturnTo(returnToRaw) {
   }
 }
 
+// Hjälpare för att sätta query-param i URL.
 function appendQueryParam(url, key, value) {
   const u = new URL(url)
   u.searchParams.set(key, value)
   return u.toString()
 }
 
+// Städar utgångna OAuth state-sessions.
 function cleanupExpiredOAuthSessions() {
   const now = Date.now()
   for (const [sessionId, state] of oauthSessions.entries()) {
@@ -151,6 +166,7 @@ function cleanupExpiredOAuthSessions() {
   }
 }
 
+// Läser anslutningsdatabasen från disk (best effort).
 async function loadConnectionStore() {
   try {
     const raw = await fs.readFile(STORE_PATH, 'utf8')
@@ -163,6 +179,7 @@ async function loadConnectionStore() {
   }
 }
 
+// Skriver anslutningsdatabasen atomiskt via tempfil.
 async function saveConnectionStore() {
   const dir = path.dirname(STORE_PATH)
   await fs.mkdir(dir, { recursive: true })
@@ -180,6 +197,7 @@ function requireGoogleConfig(res) {
   return false
 }
 
+// POST helper för OAuth endpoints som använder form-encoded body.
 async function postForm(url, formData) {
   const response = await fetch(url, {
     method: 'POST',
@@ -200,6 +218,7 @@ async function postForm(url, formData) {
   return data
 }
 
+// Exchange auth-code -> access/refresh token.
 async function exchangeCodeForTokens(code) {
   return postForm('https://oauth2.googleapis.com/token', {
     code,
@@ -210,6 +229,7 @@ async function exchangeCodeForTokens(code) {
   })
 }
 
+// Refresh flow: refresh token -> ny access token.
 async function refreshAccessToken(refreshToken) {
   return postForm('https://oauth2.googleapis.com/token', {
     refresh_token: refreshToken,
@@ -219,6 +239,7 @@ async function refreshAccessToken(refreshToken) {
   })
 }
 
+// Hämtar användarinfo för att visa anslutet konto i UI.
 async function fetchUserInfo(accessToken) {
   const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -231,6 +252,7 @@ async function fetchUserInfo(accessToken) {
   }
 }
 
+// Parsar YYYY-MM-DD till lokalt datum.
 function parseDateOnly(dateStr) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '')
   if (!m) return null
@@ -241,6 +263,7 @@ function parseDateOnly(dateStr) {
   return new Date(y, mo - 1, d, 0, 0, 0, 0)
 }
 
+// Normaliserar Google event-format till appens eventschema.
 function normalizeGoogleEvent(item, category = 'Google') {
   if (!item || item.status === 'cancelled') return null
   let start = null
@@ -276,6 +299,7 @@ function normalizeGoogleEvent(item, category = 'Google') {
   }
 }
 
+// Returnerar veckointervall [måndag, måndag+7d), antingen från query eller aktuell vecka.
 function getWeekRange(weekStartRaw) {
   const fromQuery = parseDateOnly(String(weekStartRaw || ''))
   let start = fromQuery
@@ -291,12 +315,14 @@ function getWeekRange(weekStartRaw) {
   return { start, end }
 }
 
+// Hämtar events från användarens valda Google-kalendrar för en viss vecka.
 async function fetchGoogleEvents(accessToken, weekStartRaw) {
   const { start, end } = getWeekRange(weekStartRaw)
   const warnings = []
   const events = []
 
   const googleGetJson = async (urlObj) => {
+    // Intern helper med gemensam felhantering för Google API-svar.
     const response = await fetch(urlObj, {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
@@ -338,6 +364,7 @@ async function fetchGoogleEvents(accessToken, weekStartRaw) {
     warnings.push('Många kalendrar hittades; bara de första 20 synkades.')
   }
 
+  // Hämta events kalender för kalender, paginerat.
   for (const cal of calendarsToFetch) {
     let pageToken = null
     let pages = 0
@@ -409,6 +436,7 @@ async function handleAuthStart(req, res, urlObj) {
   redirect(res, authUrl.toString())
 }
 
+// OAuth callback: verifierar state, sparar krypterad refresh token och sätter cookie.
 async function handleAuthCallback(req, res, urlObj) {
   if (!requireGoogleConfig(res)) return
   const cookies = parseCookies(req.headers.cookie)
@@ -477,6 +505,7 @@ async function handleAuthCallback(req, res, urlObj) {
   }
 }
 
+// Hämtar aktiv anslutning baserat på cookie.
 function getConnectionFromRequest(req) {
   const cookies = parseCookies(req.headers.cookie)
   const connectionId = cookies[CONNECTION_COOKIE]
@@ -486,6 +515,7 @@ function getConnectionFromRequest(req) {
   return { connectionId, connection }
 }
 
+// Returnerar om användaren är ansluten till Google och ev. e-postadress.
 async function handleAuthStatus(req, res) {
   const found = getConnectionFromRequest(req)
   if (!found) {
@@ -498,6 +528,7 @@ async function handleAuthStatus(req, res) {
   })
 }
 
+// Kopplar från konto: revoker token (best effort), rensar lagring och cookie.
 async function handleAuthDisconnect(req, res) {
   if (!requireGoogleConfig(res)) return
   const found = getConnectionFromRequest(req)
@@ -515,6 +546,7 @@ async function handleAuthDisconnect(req, res) {
   json(res, 200, { connected: false })
 }
 
+// Hämtar Google events för vecka för den anslutna användaren.
 async function handleGoogleEvents(req, res, urlObj) {
   if (!requireGoogleConfig(res)) return
   const found = getConnectionFromRequest(req)
@@ -550,6 +582,7 @@ async function handleGoogleEvents(req, res, urlObj) {
   }
 }
 
+// Enkel CORS-policy begränsad till frontend-origin.
 function applyCors(req, res) {
   const origin = req.headers.origin
   if (origin && origin === FRONTEND_ORIGIN) {
@@ -560,6 +593,7 @@ function applyCors(req, res) {
   }
 }
 
+// Startar HTTP-server och routar API-endpoints.
 async function startServer() {
   await loadConnectionStore()
 
@@ -575,6 +609,7 @@ async function startServer() {
       const urlObj = new URL(req.url || '/', `http://${req.headers.host || `${HOST}:${PORT}`}`)
       const pathname = urlObj.pathname
 
+      // OAuth start/callback/status/disconnect + events endpoint.
       if (req.method === 'GET' && pathname === '/api/google-calendar/auth/start') {
         await handleAuthStart(req, res, urlObj)
         return
@@ -611,6 +646,7 @@ async function startServer() {
   })
 }
 
+// Global startup-fångst för fel vid boot.
 startServer().catch((err) => {
   // eslint-disable-next-line no-console
   console.error('[google-calendar-proxy] failed to start', err)

@@ -50,6 +50,7 @@ export function getWeekDates(weekStart: Date): Date[] {
 }
 
 export function isAllDayEventRange(start: Date, end: Date): boolean {
+  // Tolkas som heldag om intervallet börjar/slutar vid midnatt och är minst 1 kalenderdygn.
   if (!(end > start)) return false
   const startIsMidnight =
     start.getHours() === 0 &&
@@ -66,6 +67,7 @@ export function isAllDayEventRange(start: Date, end: Date): boolean {
 }
 
 export function doesRangeOverlapDay(start: Date, end: Date, day: Date): boolean {
+  // Event överlappar dagen om det börjar före nästa midnatt och slutar efter dagens start.
   const dayStart = startOfDay(day)
   const dayEnd = addDays(dayStart, 1)
   return start < dayEnd && end > dayStart
@@ -83,6 +85,7 @@ export function getFreeSlotsForDay(
   dayEnd: Date,
   blocked: { start: Date; end: Date }[]
 ): TimeSlot[] {
+  // Klipper dagens ramar mot faktisk kalenderdag och drar sedan bort blockerade intervall.
   let current = maxDate([dayStart, setSeconds(setMinutes(setHours(day, 0), 0), 0)])
   const endOfDay = minDate([dayEnd, setSeconds(setMinutes(setHours(day, 23), 59), 59)])
   const sorted = [...blocked].sort((a, b) => a.start.getTime() - b.start.getTime())

@@ -3,6 +3,7 @@ import { getWeekStart, getWeekStartISO } from '../utils/dateUtils'
 import { addDays, setHours, setMinutes } from 'date-fns'
 import { DEFAULT_EVENT_COLORS } from '../utils/eventColors'
 
+// Standardvärden som används första gången appen öppnas.
 const WEEKDAYS: (0 | 1 | 2 | 3 | 4 | 5 | 6)[] = [1, 2, 3, 4, 5]
 
 export const defaultSettings: Settings = {
@@ -24,6 +25,7 @@ export const defaultSettings: Settings = {
   eventColors: DEFAULT_EVENT_COLORS,
 }
 
+// Demo-bokningar för att göra UI:t användbart direkt vid första start.
 function createDemoEvents(weekStart: Date): CalendarEvent[] {
   const mon = addDays(weekStart, 0)
   const tue = addDays(weekStart, 1)
@@ -59,6 +61,7 @@ function createDemoEvents(weekStart: Date): CalendarEvent[] {
   ]
 }
 
+// Demo-mål som visar hur olika måltyper kan konfigureras.
 export function createDemoGoals(): ActivityGoal[] {
   return [
     {
@@ -120,6 +123,7 @@ export function createDemoGoals(): ActivityGoal[] {
   ]
 }
 
+// Skapar initial appdata med aktuell veckostart.
 export function createDemoData(): {
   calendarEvents: CalendarEvent[]
   goals: ActivityGoal[]

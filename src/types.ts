@@ -6,18 +6,24 @@
  * Settings = globala inställningar.
  */
 
+// Ursprung för en kalenderbokning.
 export type EventSource = 'manual' | 'import' | 'google'
 
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6 // 0 = söndag
 
+// Prioritering som påverkar sortering i schemaläggaren.
 export type Priority = 'low' | 'medium' | 'high'
 
+// Tidspreferens som används i slot-scoring.
 export type PreferredTimeOfDay = 'morning' | 'lunch' | 'evening' | 'any'
 
+// Kontext/plats för aktivitet (framtida constraints).
 export type Location = 'home' | 'gym' | 'office' | 'any'
 
+// Utfall för ett planerat block.
 export type BlockStatus = 'planned' | 'done' | 'missed' | 'partial'
 
+// Kalenderbokning, manuellt skapad eller importerad.
 export interface CalendarEvent {
   id: string
   title: string
@@ -33,6 +39,7 @@ export interface CalendarEvent {
   category: string
 }
 
+// Konfiguration för ett aktivitetsmål som ska planeras ut.
 export interface ActivityGoal {
   id: string
   name: string
@@ -54,6 +61,7 @@ export interface ActivityGoal {
   color: string
 }
 
+// Konkret placerat pass i schemat.
 export interface PlannedBlock {
   id: string
   goalId: string
@@ -64,12 +72,14 @@ export interface PlannedBlock {
   isMini?: boolean // true = 10-min minimum viable session
 }
 
+// Skyddat tidsfönster som planeringen inte får använda.
 export interface SleepWindow {
   start: string // "HH:mm"
   end: string
   days: DayOfWeek[]
 }
 
+// Arbetstidsram för schemaläggning (kan inaktiveras).
 export interface WorkHours {
   start: string
   end: string
@@ -77,12 +87,14 @@ export interface WorkHours {
   enabled: boolean
 }
 
+// Färgtema per bokningskälla.
 export interface EventColors {
   manual: string
   import: string
   google: string
 }
 
+// Globala appinställningar för planering och rendering.
 export interface Settings {
   workHours: WorkHours
   sleepWindow: SleepWindow
@@ -93,12 +105,14 @@ export interface Settings {
   eventColors: EventColors
 }
 
+// Varning när hela målet inte kunde schemaläggas.
 export interface ConflictReport {
   goalId: string
   reason: string
   suggestion?: string
 }
 
+// Tidigare/alternativ schemaversion (modell reserverad för historik).
 export interface WeekScheduleVersion {
   weekStart: string // ISO date (monday)
   plannedBlocks: PlannedBlock[]
@@ -106,6 +120,7 @@ export interface WeekScheduleVersion {
   createdAt: string
 }
 
+// Hela persistenta app-state.
 export interface AppState {
   calendarEvents: CalendarEvent[]
   goals: ActivityGoal[]

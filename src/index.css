@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Grundstil för hela appen. */
 body {
   margin: 0;
   font-family: 'DM Sans', system-ui, sans-serif;
@@ -9,6 +10,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Säkerställer att layoutkomponenter kan fylla höjden. */
 #root {
   min-height: 100vh;
 }

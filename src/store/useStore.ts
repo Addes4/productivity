@@ -14,6 +14,7 @@ import { loadState, saveState } from '../utils/storage'
 import { expandCalendarEventsForWeek } from '../utils/recurringEvents'
 import { normalizeEventColors } from '../utils/eventColors'
 
+// Tom baseline-state (överskrivs av loadState eller demoData vid init).
 const initial: AppState = {
   calendarEvents: [],
   goals: [],
@@ -25,11 +26,13 @@ const initial: AppState = {
   scheduleVersion: 0,
 }
 
+// Parsar "yyyy-MM-dd" (veckostart) till lokalt datum.
 function parseWeekStart(weekStart: string): Date {
   const [y, m, d] = weekStart.split('-').map(Number)
   return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
 }
 
+// Kontrollerar om ett event överlappar ett tidsintervall.
 function eventOverlapsRange(event: CalendarEvent, rangeStart: Date, rangeEnd: Date): boolean {
   const start = parseISO(event.start)
   const end = parseISO(event.end)
@@ -55,6 +58,7 @@ function normalizeSettings(settings?: Settings): Settings {
 }
 
 export function useStore() {
+  // Initialisering: försök läsa sparat state, annars skapa demo-state.
   const [state, setState] = useState<AppState>(() => {
     const loaded = loadState()
     if (loaded) return { ...loaded, settings: normalizeSettings(loaded.settings) }
@@ -67,9 +71,11 @@ export function useStore() {
   stateRef.current = state
 
   useEffect(() => {
+    // Persistens efter varje state-ändring.
     saveState(state)
   }, [state])
 
+  // CRUD: kalenderbokningar.
   const addCalendarEvent = useCallback((event: CalendarEvent) => {
     setState((s) => ({
       ...s,
@@ -77,6 +83,7 @@ export function useStore() {
     }))
   }, [])
 
+  // Batch-tillägg för importflöden.
   const addCalendarEvents = useCallback((events: CalendarEvent[]) => {
     if (events.length === 0) return
     setState((s) => ({
@@ -85,6 +92,7 @@ export function useStore() {
     }))
   }, [])
 
+  // Ersätter Google-event som överlappar en vecka med senaste synkresultat.
   const replaceGoogleCalendarEventsForWeek = useCallback(
     (weekStart: string, googleEvents: CalendarEvent[]) => {
       const rangeStart = parseWeekStart(weekStart)
@@ -115,6 +123,7 @@ export function useStore() {
     []
   )
 
+  // Används vid frånkoppling för att rensa all Google-data lokalt.
   const clearGoogleCalendarEvents = useCallback(() => {
     setState((s) => ({
       ...s,
@@ -122,6 +131,7 @@ export function useStore() {
     }))
   }, [])
 
+  // CRUD: enskild bokning.
   const updateCalendarEvent = useCallback((id: string, updates: Partial<CalendarEvent>) => {
     setState((s) => ({
       ...s,
@@ -138,6 +148,7 @@ export function useStore() {
     }))
   }, [])
 
+  // CRUD: mål.
   const addGoal = useCallback((goal: ActivityGoal) => {
     setState((s) => ({ ...s, goals: [...s.goals, goal] }))
   }, [])
@@ -157,6 +168,7 @@ export function useStore() {
     }))
   }, [])
 
+  // CRUD: planerade block (status/flytt m.m.).
   const updatePlannedBlock = useCallback(
     (id: string, updates: Partial<PlannedBlock>) => {
       setState((s) => ({
@@ -169,18 +181,22 @@ export function useStore() {
     []
   )
 
+  // Sparar och normaliserar inställningar för bakåtkompatibilitet.
   const setSettings = useCallback((settings: Settings) => {
     setState((s) => ({ ...s, settings: normalizeSettings(settings) }))
   }, [])
 
+  // Flagga för fallback med mini-pass.
   const setMinimumViableDay = useCallback((on: boolean) => {
     setState((s) => ({ ...s, minimumViableDay: on }))
   }, [])
 
+  // Kör hela schemaläggningen för aktuell eller vald vecka.
   const runPlanWeek = useCallback((forWeekStart?: string) => {
     const s = stateRef.current
     const weekStartStr = forWeekStart ?? s.currentWeekStart
     const weekStartDate = parseWeekStart(weekStartStr)
+    // Expanderar återkommande bokningar till konkreta instanser för veckan.
     const weekCalendarEvents = expandCalendarEventsForWeek(s.calendarEvents, weekStartStr)
     try {
       const result: PlanWeekResult = planWeek(
@@ -213,6 +229,7 @@ export function useStore() {
     }
   }, [])
 
+  // Veckonavigering i UI.
   const goToNextWeek = useCallback(() => {
     const next = addDays(parseISO(state.currentWeekStart), 7)
     setState((s) => ({
@@ -229,6 +246,7 @@ export function useStore() {
     }))
   }, [state.currentWeekStart])
 
+  // Används av import av hela app-state.
   const replaceState = useCallback((newState: AppState) => {
     setState({ ...newState, settings: normalizeSettings(newState.settings) })
   }, [])

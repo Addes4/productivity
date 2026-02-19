@@ -2,6 +2,7 @@ import { format } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import type { PlannedBlock, ActivityGoal, DayOfWeek } from '../types'
 
+// Label-mappningar för läsbar presentation i detaljvyn.
 const DAY_NAMES: Record<DayOfWeek, string> = {
   0: 'Söndag',
   1: 'Måndag',
@@ -16,6 +17,7 @@ const PRIORITY_LABEL = { low: 'Låg', medium: 'Medel', high: 'Hög' }
 const PREFERRED_LABEL = { morning: 'Morgon', lunch: 'Lunch', evening: 'Kväll', any: 'Valfri' }
 const LOCATION_LABEL = { home: 'Hemma', gym: 'Gym', office: 'Kontor', any: 'Valfri' }
 
+// Visar detaljer om ett planerat block + snabbåtgärder för status/redigering.
 export function BlockDetailModal({
   block,
   goal,
@@ -29,6 +31,7 @@ export function BlockDetailModal({
   onEditGoal?: (goalId: string) => void
   onClose: () => void
 }) {
+  // Sammanhängande text för tillåtna dagar.
   const allowedDaysStr = goal.allowedDays
     .slice()
     .sort((a, b) => a - b)

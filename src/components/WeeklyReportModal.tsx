@@ -2,6 +2,7 @@ import type { ActivityGoal, PlannedBlock, ConflictReport } from '../types'
 import { differenceInMinutes } from 'date-fns'
 import { parseISO } from 'date-fns'
 
+// Summerad vy av veckans utfall per mål.
 export function WeeklyReportModal({
   goals,
   plannedBlocks,
@@ -13,6 +14,7 @@ export function WeeklyReportModal({
   conflictReports: ConflictReport[]
   onClose: () => void
 }) {
+  // Beräknar planerat/gjort/missat samt om målet anses uppnått.
   const goalStats = goals.map((goal) => {
     const blocks = plannedBlocks.filter((b) => b.goalId === goal.id)
     const target = goal.weeklyTargetMinutes
@@ -52,6 +54,7 @@ export function WeeklyReportModal({
 
   const reachedCount = goalStats.filter((s) => s.reached).length
   const totalGoals = goals.length
+  // Enkel textrekommendation utifrån resultat och konflikter.
   const suggestion =
     conflictReports.length > 0
       ? 'Justera tidsfönster eller aktivera "Minimum viable day" för att få in fler pass.'

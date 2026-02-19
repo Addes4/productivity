@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import {
   DndContext,
   DragEndEvent,
@@ -6,17 +6,66 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { parseISO, format, differenceInMinutes, getISOWeek } from 'date-fns'
+import { addMinutes, parseISO, format, differenceInMinutes } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import type { CalendarEvent, PlannedBlock, ActivityGoal, Settings } from '../types'
 import { doesRangeOverlapDay, getWeekDates, isAllDayEventRange } from '../utils/dateUtils'
 import { isWeekNumberEvent } from '../utils/calendarEventUtils'
 import { getEventSourceColor } from '../utils/eventColors'
+import {
+  buildOverlapLayout,
+  exceedsConcurrentLimit,
+  rangesOverlap,
+} from '../utils/overlapLayout'
 import { CalendarColumn, type OnBlockClick } from './CalendarColumn'
 
+// Visuell layout för tidsaxeln i veckovyn.
 const HOUR_HEIGHT = 52
 const FIRST_HOUR = 6
 const LAST_HOUR = 22
+
+interface SlotTarget {
+  dayIso: string
+  hour: number
+}
+
+function toHourStart(day: Date, hour: number): Date {
+  const out = new Date(day)
+  out.setHours(hour, 0, 0, 0)
+  return out
+}
+
+function parseSlotTarget(id: string): SlotTarget | null {
+  const [prefix, dayIso, hourText] = id.split('|')
+  if (prefix !== 'col' || !dayIso || !hourText) return null
+  const hour = Number(hourText)
+  if (!Number.isInteger(hour)) return null
+  return { dayIso, hour }
+}
+
+function getNewRangeFromSlot(
+  originalStart: Date,
+  originalEnd: Date,
+  slot: SlotTarget
+): { start: Date; end: Date } | null {
+  const slotDay = parseISO(slot.dayIso)
+  if (Number.isNaN(slotDay.getTime())) return null
+
+  const durationMinutes = differenceInMinutes(originalEnd, originalStart)
+  if (durationMinutes <= 0) return null
+
+  const start = new Date(slotDay)
+  start.setHours(slot.hour, originalStart.getMinutes(), 0, 0)
+  const end = addMinutes(start, durationMinutes)
+
+  const dayStart = new Date(slotDay)
+  dayStart.setHours(FIRST_HOUR, 0, 0, 0)
+  const dayEnd = new Date(slotDay)
+  dayEnd.setHours(LAST_HOUR, 0, 0, 0)
+  if (start < dayStart || end > dayEnd) return null
+
+  return { start, end }
+}
 
 export interface CalendarGridProps {
   weekStart: string
@@ -25,12 +74,14 @@ export interface CalendarGridProps {
   goals: ActivityGoal[]
   settings: Settings
   onBlockMove?: (blockId: string, newStart: string, newEnd: string) => void
+  onCalendarEventMove?: (event: CalendarEvent, newStart: string, newEnd: string) => void
   onBlockClick?: OnBlockClick
   onCalendarEventClick?: (event: CalendarEvent) => void
   onAddEvent?: () => void
   categoryFilter?: string[]
 }
 
+// Huvudgrid för veckoschema med heldagsrad, timmar och drag/drop.
 export function CalendarGrid({
   weekStart,
   calendarEvents,
@@ -38,13 +89,13 @@ export function CalendarGrid({
   goals,
   settings,
   onBlockMove,
+  onCalendarEventMove,
   onBlockClick,
   onCalendarEventClick,
   onAddEvent,
   categoryFilter = [],
 }: CalendarGridProps) {
   const weekStartDate = parseISO(weekStart)
-  const isoWeekNumber = getISOWeek(weekStartDate)
   const weekDates = getWeekDates(weekStartDate)
 
   const getGoal = useCallback(
@@ -58,6 +109,7 @@ export function CalendarGrid({
     })
   )
 
+  // Veckonummer-events hanteras separat och ska inte visas som vanliga bokningar.
   const visibleCalendarEvents = calendarEvents.filter((event) => !isWeekNumberEvent(event))
 
   const calendarEventRanges = visibleCalendarEvents.map((event) => {
@@ -87,56 +139,144 @@ export function CalendarGrid({
       .map(({ event }) => event)
   )
 
+  const dayOverlapLayouts = useMemo(
+    () =>
+      weekDates.map((day) => {
+        const displayStart = toHourStart(day, FIRST_HOUR)
+        const displayEnd = toHourStart(day, LAST_HOUR + 1)
+        const dayRanges = [
+          ...timedCalendarEvents.flatMap((event) => {
+            if (!showCategory(event.category)) return []
+            const start = parseISO(event.start)
+            const end = parseISO(event.end)
+            if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+              return []
+            }
+            if (!rangesOverlap(start, end, displayStart, displayEnd)) return []
+            return [{ id: `event:${event.id}`, start, end }]
+          }),
+          ...plannedBlocks.flatMap((block) => {
+            const goal = getGoal(block.goalId)
+            if (!goal || !showCategory(goal.category)) return []
+            const start = parseISO(block.start)
+            const end = parseISO(block.end)
+            if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+              return []
+            }
+            if (!rangesOverlap(start, end, displayStart, displayEnd)) return []
+            return [{ id: `block:${block.id}`, start, end }]
+          }),
+        ]
+        return buildOverlapLayout(dayRanges, 4)
+      }),
+    [getGoal, plannedBlocks, timedCalendarEvents, weekDates, categoryFilter]
+  )
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const { active, delta } = event
-      const id = active.id as string
-      const block = plannedBlocks.find((b) => b.id === id)
-      if (!block || block.locked || !onBlockMove) return
+      const { active, over } = event
+      const activeId = String(active.id)
+      const slotTarget = over ? parseSlotTarget(String(over.id)) : null
+      if (!slotTarget) return
 
-      const start = parseISO(block.start)
-      const minutes = differenceInMinutes(parseISO(block.end), start)
-      const deltaMinutes = Math.round(delta.y / HOUR_HEIGHT) * 60
-      const newStart = new Date(start.getTime() + deltaMinutes * 60 * 1000)
-      const newEnd = new Date(newStart.getTime() + minutes * 60 * 1000)
+      const movedBlockId = activeId.startsWith('block:') ? activeId.slice(6) : null
+      const movedEventId = activeId.startsWith('event:') ? activeId.slice(6) : null
+      if (!movedBlockId && !movedEventId) return
 
-      const dayStart = new Date(newStart)
-      dayStart.setHours(FIRST_HOUR, 0, 0, 0)
-      const dayEnd = new Date(newStart)
-      dayEnd.setHours(LAST_HOUR, 0, 0, 0)
-      if (newStart < dayStart || newEnd > dayEnd) return
+      const movedBlock = movedBlockId
+        ? plannedBlocks.find((b) => b.id === movedBlockId)
+        : null
+      const movedEvent = movedEventId
+        ? timedCalendarEvents.find((ev) => ev.id === movedEventId)
+        : null
+      if (!movedBlock && !movedEvent) return
 
-      const sleep = settings.sleepWindow
-      const dow = newStart.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
-      const [sh, sm] = sleep.start.split(':').map(Number)
-      const [eh, em] = sleep.end.split(':').map(Number)
-      const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean =>
-        aStart < bEnd && aEnd > bStart
-      const getSleepInterval = (baseDate: Date) => {
-        const sleepStart = new Date(baseDate)
-        sleepStart.setHours(sh, sm, 0, 0)
-        const sleepEnd = new Date(baseDate)
-        sleepEnd.setHours(eh, em, 0, 0)
-        if (sleepEnd <= sleepStart) sleepEnd.setDate(sleepEnd.getDate() + 1)
-        return { sleepStart, sleepEnd }
+      if (movedBlock && !onBlockMove) return
+      if (movedEvent && !onCalendarEventMove) return
+
+      const sourceStart = parseISO(movedBlock ? movedBlock.start : movedEvent!.start)
+      const sourceEnd = parseISO(movedBlock ? movedBlock.end : movedEvent!.end)
+      const nextRange = getNewRangeFromSlot(sourceStart, sourceEnd, slotTarget)
+      if (!nextRange) return
+      const { start: newStart, end: newEnd } = nextRange
+
+      // Blockera drag som hamnar i sömnfönster (även över midnatt).
+      if (movedBlock) {
+        const sleep = settings.sleepWindow
+        const dow = newStart.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
+        const [sh, sm] = sleep.start.split(':').map(Number)
+        const [eh, em] = sleep.end.split(':').map(Number)
+        const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean =>
+          aStart < bEnd && aEnd > bStart
+        const getSleepInterval = (baseDate: Date) => {
+          const sleepStart = new Date(baseDate)
+          sleepStart.setHours(sh, sm, 0, 0)
+          const sleepEnd = new Date(baseDate)
+          sleepEnd.setHours(eh, em, 0, 0)
+          if (sleepEnd <= sleepStart) sleepEnd.setDate(sleepEnd.getDate() + 1)
+          return { sleepStart, sleepEnd }
+        }
+
+        if (sleep.days.includes(dow)) {
+          const { sleepStart, sleepEnd } = getSleepInterval(newStart)
+          if (overlaps(newStart, newEnd, sleepStart, sleepEnd)) return
+        }
+
+        const prevDay = new Date(newStart)
+        prevDay.setDate(prevDay.getDate() - 1)
+        const prevDow = prevDay.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
+        if (sleep.days.includes(prevDow)) {
+          const { sleepStart, sleepEnd } = getSleepInterval(prevDay)
+          if (overlaps(newStart, newEnd, sleepStart, sleepEnd)) return
+        }
       }
 
-      if (sleep.days.includes(dow)) {
-        const { sleepStart, sleepEnd } = getSleepInterval(newStart)
-        if (overlaps(newStart, newEnd, sleepStart, sleepEnd)) return
-      }
+      const overlapRanges = [
+        ...timedCalendarEvents.flatMap((ev) => {
+          if (movedEventId && ev.id === movedEventId) return []
+          const evStart = parseISO(ev.start)
+          const evEnd = parseISO(ev.end)
+          if (Number.isNaN(evStart.getTime()) || Number.isNaN(evEnd.getTime()) || evEnd <= evStart) {
+            return []
+          }
+          return [{ id: `event:${ev.id}`, start: evStart, end: evEnd }]
+        }),
+        ...plannedBlocks.flatMap((existingBlock) => {
+          if (movedBlockId && existingBlock.id === movedBlockId) return []
+          const existingStart = parseISO(existingBlock.start)
+          const existingEnd = parseISO(existingBlock.end)
+          if (
+            Number.isNaN(existingStart.getTime()) ||
+            Number.isNaN(existingEnd.getTime()) ||
+            existingEnd <= existingStart
+          ) {
+            return []
+          }
+          return [{ id: `block:${existingBlock.id}`, start: existingStart, end: existingEnd }]
+        }),
+        {
+          id: movedBlockId ? `block:${movedBlockId}` : `event:${movedEventId}`,
+          start: newStart,
+          end: newEnd,
+        },
+      ]
+      if (exceedsConcurrentLimit(overlapRanges, 4)) return
 
-      const prevDay = new Date(newStart)
-      prevDay.setDate(prevDay.getDate() - 1)
-      const prevDow = prevDay.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
-      if (sleep.days.includes(prevDow)) {
-        const { sleepStart, sleepEnd } = getSleepInterval(prevDay)
-        if (overlaps(newStart, newEnd, sleepStart, sleepEnd)) return
+      if (movedBlockId) {
+        onBlockMove?.(movedBlockId, newStart.toISOString(), newEnd.toISOString())
+        return
       }
-
-      onBlockMove(id, newStart.toISOString(), newEnd.toISOString())
+      if (movedEvent) {
+        onCalendarEventMove?.(movedEvent, newStart.toISOString(), newEnd.toISOString())
+      }
     },
-    [plannedBlocks, onBlockMove, settings.sleepWindow]
+    [
+      onBlockMove,
+      onCalendarEventMove,
+      plannedBlocks,
+      settings.sleepWindow,
+      timedCalendarEvents,
+    ]
   )
 
   const hours: number[] = []
@@ -147,7 +287,6 @@ export function CalendarGrid({
       <div className="grid grid-cols-[64px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100/70 sticky top-0 z-10">
         <div className="p-2 flex flex-col justify-center text-left leading-tight">
           <span className="text-[10px] font-semibold text-slate-500 tracking-wide uppercase">Tid</span>
-          <span className="text-sm font-bold text-slate-700 tabular-nums">v{isoWeekNumber}</span>
         </div>
         {weekDates.map((d) => (
           <div
@@ -214,7 +353,7 @@ export function CalendarGrid({
               <div className="text-xs text-slate-400 pr-3 text-right pt-1 font-medium">
                 {hour.toString().padStart(2, '0')}:00
               </div>
-              {weekDates.map((day) => (
+              {weekDates.map((day, dayIndex) => (
                 <CalendarColumn
                   key={day.toISOString()}
                   day={day}
@@ -227,6 +366,7 @@ export function CalendarGrid({
                   getGoal={getGoal}
                   eventColors={settings.eventColors}
                   categoryFilter={categoryFilter}
+                  overlapLayoutById={dayOverlapLayouts[dayIndex] ?? {}}
                   onBlockClick={onBlockClick}
                   onCalendarEventClick={onCalendarEventClick}
                 />

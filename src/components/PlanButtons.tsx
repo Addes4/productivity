@@ -1,3 +1,4 @@
+// Knappar för att köra schemaläggning och toggla mini-pass-fallback.
 export function PlanButtons({
   onPlanWeek,
   minimumViableDay,
