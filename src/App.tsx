@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { addDays, getISOWeek } from 'date-fns'
+import { addDays, getISOWeek, format } from 'date-fns'
 import { useStore } from './store/useStore'
 import { CalendarGrid } from './components/CalendarGrid'
 import { SidePanel } from './components/SidePanel'
@@ -7,31 +7,20 @@ import { AddEventModal } from './components/AddEventModal'
 import { WeeklyReportModal } from './components/WeeklyReportModal'
 import { SettingsPanel } from './components/SettingsPanel'
 import { exportState, importState } from './utils/storage'
-import type { CalendarEvent, ActivityGoal, PlannedBlock } from './types'
+import type { CalendarEvent, ActivityGoal, PlannedBlock, CalendarImportResult } from './types'
 import { BlockDetailModal } from './components/BlockDetailModal'
 import { parseIcsCalendar } from './utils/icsImport'
 import { isWeekNumberEvent } from './utils/calendarEventUtils'
 import { expandCalendarEventsForWeek } from './utils/recurringEvents'
-import { isAllDayEventRange } from './utils/dateUtils'
+import { isAllDayEventRange, parseWeekStartString } from './utils/dateUtils'
 import { exceedsConcurrentLimit } from './utils/overlapLayout'
 
-// Gemensam summering som visas efter importflöden.
-interface CalendarImportResult {
-  imported: number
-  skipped: number
-  warnings: string[]
-}
 
 interface GoogleAuthStatus {
   connected: boolean
   email: string | null
 }
 
-// Hjälpare för att tolka "yyyy-MM-dd" till lokalt datum.
-function parseWeekStart(weekStart: string): Date {
-  const [y, m, d] = weekStart.split('-').map(Number)
-  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
-}
 
 function rangesOverlap(
   start: Date,
@@ -47,7 +36,7 @@ function buildTimedOverlapRangesForWeek(
   plannedBlocks: PlannedBlock[],
   weekStart: string
 ): Array<{ id: string; start: Date; end: Date }> {
-  const weekStartDate = parseWeekStart(weekStart)
+  const weekStartDate = parseWeekStartString(weekStart)
   const weekEndDate = addDays(weekStartDate, 7)
   const ranges: Array<{ id: string; start: Date; end: Date }> = []
 
@@ -79,6 +68,7 @@ function App() {
     addCalendarEvents,
     replaceGoogleCalendarEventsForWeek,
     clearGoogleCalendarEvents,
+    markGoogleEventDeleted,
     updateCalendarEvent,
     removeCalendarEvent,
     updatePlannedBlock,
@@ -107,6 +97,8 @@ function App() {
   })
   // Förhindrar dubbel autosynk för samma vecka.
   const autoSyncedWeekRef = useRef<string | null>(null)
+  // Spårar veckor där autosynk misslyckats — förhindrar oändlig retryloop vid nere-backend.
+  const failedSyncWeeksRef = useRef<Set<string>>(new Set())
 
   // Uppdatering när användaren drar ett planerat block.
   const handleBlockMove = useCallback(
@@ -132,7 +124,7 @@ function App() {
 
         addCalendarEvent({
           ...eventToMove,
-          id: `event-${Date.now()}`,
+          id: `event-${crypto.randomUUID()}`,
           start: newStart,
           end: newEnd,
           recurrenceDays: undefined,
@@ -156,24 +148,48 @@ function App() {
     [addGoal]
   )
 
-  // Skapa ny bokning eller uppdatera befintlig (inkl. återkommande parent).
+  // Skapa ny bokning eller uppdatera befintlig (inkl. återkommande instans).
   const handleSaveEvent = useCallback(
-    (event: Omit<CalendarEvent, 'id'>, existingId?: string) => {
-      const baseCalendarEvents = existingId
-        ? state.calendarEvents.filter((e) => e.id !== existingId)
-        : state.calendarEvents
-      const nextCalendarEvents = [
-        ...baseCalendarEvents,
-        {
-          id: existingId ?? `event-${Date.now()}`,
-          ...event,
-          recurrenceParentId: undefined,
-          recurrenceInstanceDate: undefined,
-        },
-      ]
+    (
+      event: Omit<CalendarEvent, 'id'>,
+      existingId?: string,
+      instanceOverride?: { parentId: string; instanceDate: string }
+    ) => {
+      // Bygg en simulerad kalender för överlappningskoll.
+      let simulatedEvents: CalendarEvent[]
+      if (instanceOverride) {
+        // Lägg till undantag för den redigerade instansen och inkludera det nya fristående eventet.
+        simulatedEvents = [
+          ...state.calendarEvents.map((e) => {
+            if (e.id !== instanceOverride.parentId) return e
+            const exDates = new Set(e.recurrenceExDates ?? [])
+            exDates.add(instanceOverride.instanceDate)
+            return { ...e, recurrenceExDates: Array.from(exDates).sort() }
+          }),
+          {
+            id: `event-check-temp`,
+            ...event,
+            recurrenceParentId: undefined,
+            recurrenceInstanceDate: undefined,
+          },
+        ]
+      } else {
+        const baseCalendarEvents = existingId
+          ? state.calendarEvents.filter((e) => e.id !== existingId)
+          : state.calendarEvents
+        simulatedEvents = [
+          ...baseCalendarEvents,
+          {
+            id: existingId ?? `event-check-temp`,
+            ...event,
+            recurrenceParentId: undefined,
+            recurrenceInstanceDate: undefined,
+          },
+        ]
+      }
 
       const expandedForWeek = expandCalendarEventsForWeek(
-        nextCalendarEvents,
+        simulatedEvents,
         state.currentWeekStart
       )
       const overlapRanges = buildTimedOverlapRangesForWeek(
@@ -189,21 +205,37 @@ function App() {
         }
       }
 
-      if (existingId) {
+      if (instanceOverride) {
+        // Lägg till undantagsdatum i föräldraeventet och skapa ny fristående bokning.
+        const parent = state.calendarEvents.find((e) => e.id === instanceOverride.parentId)
+        if (parent) {
+          const existingExDates = parent.recurrenceExDates ?? []
+          const nextExDates = Array.from(
+            new Set([...existingExDates, instanceOverride.instanceDate])
+          ).sort()
+          updateCalendarEvent(parent.id, { recurrenceExDates: nextExDates })
+        }
+        addCalendarEvent({
+          ...event,
+          recurrenceParentId: undefined,
+          recurrenceInstanceDate: undefined,
+          id: `event-${crypto.randomUUID()}`,
+        })
+      } else if (existingId) {
         updateCalendarEvent(existingId, {
           ...event,
           recurrenceParentId: undefined,
           recurrenceInstanceDate: undefined,
         })
-        setSelectedCalendarEvent(null)
       } else {
         addCalendarEvent({
           ...event,
           recurrenceParentId: undefined,
           recurrenceInstanceDate: undefined,
-          id: `event-${Date.now()}`,
+          id: `event-${crypto.randomUUID()}`,
         })
       }
+      setSelectedCalendarEvent(null)
       setAddEventOpen(false)
       return { ok: true as const }
     },
@@ -217,20 +249,35 @@ function App() {
     ]
   )
 
-  // Radering: en instans av återkommande event => exDate, annars vanlig delete.
+  // Radering: stöder tre lägen för återkommande instanser.
   const handleDeleteEvent = useCallback(
-    (eventToDelete: CalendarEvent) => {
+    (eventToDelete: CalendarEvent, mode: 'single' | 'future' | 'all' = 'all') => {
+      // Lägg till Google-event i blocklistan så att det inte återimporteras vid nästa synk.
+      if (eventToDelete.source === 'google') {
+        const key = `${eventToDelete.title.trim().toLowerCase()}|${eventToDelete.start}|${eventToDelete.end}`
+        markGoogleEventDeleted(key)
+      }
       if (eventToDelete.recurrenceParentId && eventToDelete.recurrenceInstanceDate) {
         const parent = state.calendarEvents.find((e) => e.id === eventToDelete.recurrenceParentId)
-        if (parent) {
-          // Ta bort endast vald instans genom att lägga datumet i undantagslistan.
-          const existingExDates = parent.recurrenceExDates ?? []
-          const nextExDates = Array.from(
-            new Set([...existingExDates, eventToDelete.recurrenceInstanceDate])
-          ).sort()
-          updateCalendarEvent(parent.id, {
-            recurrenceExDates: nextExDates,
-          })
+        if (mode === 'single') {
+          // Lägg till undantag för denna instans.
+          if (parent) {
+            const existingExDates = parent.recurrenceExDates ?? []
+            const nextExDates = Array.from(
+              new Set([...existingExDates, eventToDelete.recurrenceInstanceDate])
+            ).sort()
+            updateCalendarEvent(parent.id, { recurrenceExDates: nextExDates })
+          }
+        } else if (mode === 'future') {
+          // Sätt slutdatum på föräldraeventet till dagen före denna instans.
+          if (parent) {
+            const instanceDate = parseWeekStartString(eventToDelete.recurrenceInstanceDate)
+            const endDate = format(addDays(instanceDate, -1), 'yyyy-MM-dd')
+            updateCalendarEvent(parent.id, { recurrenceEndDate: endDate })
+          }
+        } else {
+          // Ta bort hela serien genom att radera föräldraeventet.
+          removeCalendarEvent(eventToDelete.recurrenceParentId)
         }
       } else {
         removeCalendarEvent(eventToDelete.id)
@@ -238,7 +285,7 @@ function App() {
       setSelectedCalendarEvent((current) => (current?.id === eventToDelete.id ? null : current))
       setAddEventOpen(false)
     },
-    [removeCalendarEvent, state.calendarEvents, updateCalendarEvent]
+    [markGoogleEventDeleted, removeCalendarEvent, state.calendarEvents, updateCalendarEvent]
   )
 
   // Exporterar hela state till JSON-fil.
@@ -255,9 +302,11 @@ function App() {
 
   // Ersätter app-state med importerad JSON om formatet är giltigt.
   const handleImport = useCallback(
-    (json: string) => {
+    (json: string): { ok: boolean; error?: string } => {
       const imported = importState(json)
-      if (imported) replaceState(imported)
+      if (!imported) return { ok: false, error: 'Ogiltig eller inkompatibel JSON-fil.' }
+      replaceState(imported)
+      return { ok: true }
     },
     [replaceState]
   )
@@ -275,7 +324,7 @@ function App() {
       const newEvents: CalendarEvent[] = []
       let skipped = 0
 
-      parsed.events.forEach((ev, index) => {
+      parsed.events.forEach((ev) => {
         if (isWeekNumberEvent({ title: ev.title, category: ev.category || 'Import' })) {
           skipped++
           return
@@ -287,7 +336,7 @@ function App() {
         }
         existingKeys.add(key)
         newEvents.push({
-          id: `event-import-${Date.now()}-${index}`,
+          id: `event-import-${crypto.randomUUID()}`,
           title: ev.title,
           start: ev.start,
           end: ev.end,
@@ -370,7 +419,7 @@ function App() {
         warnings?: string[]
       }
 
-      const weekStartDate = parseWeekStart(state.currentWeekStart)
+      const weekStartDate = parseWeekStartString(state.currentWeekStart)
       const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
       const overlapsWeek = (event: CalendarEvent) => {
         const start = new Date(event.start)
@@ -381,6 +430,7 @@ function App() {
       const keyOf = (title: string, start: string, end: string) =>
         `${title.trim().toLowerCase()}|${start}|${end}`
 
+      const blockedKeys = new Set(state.deletedGoogleEventKeys)
       const existingKeys = new Set(
         state.calendarEvents
           .filter((e) => !(e.source === 'google' && overlapsWeek(e)))
@@ -389,19 +439,24 @@ function App() {
       const googleEvents: CalendarEvent[] = []
       let skipped = 0
 
-      data.events.forEach((ev, index) => {
+      data.events.forEach((ev) => {
         if (isWeekNumberEvent({ title: ev.title, category: ev.category || 'Google' })) {
           skipped++
           return
         }
         const key = keyOf(ev.title, ev.start, ev.end)
+        // Hoppa över event som användaren manuellt raderat lokalt.
+        if (blockedKeys.has(key)) {
+          skipped++
+          return
+        }
         if (existingKeys.has(key)) {
           skipped++
           return
         }
         existingKeys.add(key)
         googleEvents.push({
-          id: `event-google-${Date.now()}-${index}`,
+          id: `event-google-${crypto.randomUUID()}`,
           title: ev.title || 'Google-bokning',
           start: ev.start,
           end: ev.end,
@@ -419,7 +474,7 @@ function App() {
         warnings: data.warnings ?? [],
       }
     },
-    [replaceGoogleCalendarEventsForWeek, state.calendarEvents, state.currentWeekStart]
+    [replaceGoogleCalendarEventsForWeek, state.calendarEvents, state.currentWeekStart, state.deletedGoogleEventKeys]
   )
 
   // Kopplar från Google-konto via backend och uppdaterar auth-status.
@@ -463,16 +518,19 @@ function App() {
   useEffect(() => {
     if (!googleAuthStatus.connected) {
       autoSyncedWeekRef.current = null
+      failedSyncWeeksRef.current.clear()
       return
     }
     const weekKey = state.currentWeekStart
     if (autoSyncedWeekRef.current === weekKey) return
+    if (failedSyncWeeksRef.current.has(weekKey)) return
     autoSyncedWeekRef.current = weekKey
     void (async () => {
       try {
         await importGoogleCalendar()
       } catch {
-        // Allow retry if the auto-sync request fails.
+        // Markera veckan som misslyckad för att undvika retryloop vid nere-backend.
+        failedSyncWeeksRef.current.add(weekKey)
         autoSyncedWeekRef.current = null
       }
     })()
@@ -483,14 +541,16 @@ function App() {
     ? state.goals.find((g) => g.id === selectedBlock.goalId)
     : null
 
-  const categories = Array.from(
-    new Set([
-      ...state.goals.map((g) => g.category),
-      ...state.calendarEvents
-        .filter((e) => !isWeekNumberEvent(e))
-        .map((e) => e.category),
-    ])
-  ).filter(Boolean)
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...state.goals.map((g) => g.category),
+          ...state.calendarEvents.filter((e) => !isWeekNumberEvent(e)).map((e) => e.category),
+        ])
+      ).filter(Boolean),
+    [state.goals, state.calendarEvents]
+  )
 
   // Återkommande bokningar expanderas till veckans instanser innan render.
   const weekCalendarEvents = useMemo(
@@ -498,7 +558,7 @@ function App() {
     [state.calendarEvents, state.currentWeekStart]
   )
   const currentWeekNumber = useMemo(
-    () => getISOWeek(parseWeekStart(state.currentWeekStart)),
+    () => getISOWeek(parseWeekStartString(state.currentWeekStart)),
     [state.currentWeekStart]
   )
 
@@ -598,6 +658,7 @@ function App() {
         <SidePanel
           goals={state.goals}
           plannedBlocks={state.plannedBlocks}
+          weekStart={state.currentWeekStart}
           minimumViableDay={state.minimumViableDay}
           conflictReports={state.conflictReports}
           editingGoalId={editingGoalId}

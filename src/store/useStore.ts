@@ -7,7 +7,7 @@ import type {
   Settings,
 } from '../types'
 import { planWeek, type PlanWeekResult } from '../utils/planWeek'
-import { getWeekStartISO } from '../utils/dateUtils'
+import { getWeekStartISO, parseWeekStartString } from '../utils/dateUtils'
 import { parseISO, addDays } from 'date-fns'
 import { defaultSettings, createDemoData } from '../data/demoData'
 import { loadState, saveState } from '../utils/storage'
@@ -24,13 +24,9 @@ const initial: AppState = {
   conflictReports: [],
   minimumViableDay: false,
   scheduleVersion: 0,
+  deletedGoogleEventKeys: [],
 }
 
-// Parsar "yyyy-MM-dd" (veckostart) till lokalt datum.
-function parseWeekStart(weekStart: string): Date {
-  const [y, m, d] = weekStart.split('-').map(Number)
-  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
-}
 
 // Kontrollerar om ett event överlappar ett tidsintervall.
 function eventOverlapsRange(event: CalendarEvent, rangeStart: Date, rangeEnd: Date): boolean {
@@ -61,7 +57,15 @@ export function useStore() {
   // Initialisering: försök läsa sparat state, annars skapa demo-state.
   const [state, setState] = useState<AppState>(() => {
     const loaded = loadState()
-    if (loaded) return { ...loaded, settings: normalizeSettings(loaded.settings) }
+    if (loaded) {
+      return {
+        ...initial,
+        ...loaded,
+        // Bakåtkompatibilitet: äldre sparade states saknar fältet.
+        deletedGoogleEventKeys: loaded.deletedGoogleEventKeys ?? [],
+        settings: normalizeSettings(loaded.settings),
+      }
+    }
     const demo = createDemoData()
     return { ...initial, ...demo, settings: normalizeSettings(initial.settings) }
   })
@@ -95,7 +99,7 @@ export function useStore() {
   // Ersätter Google-event som överlappar en vecka med senaste synkresultat.
   const replaceGoogleCalendarEventsForWeek = useCallback(
     (weekStart: string, googleEvents: CalendarEvent[]) => {
-      const rangeStart = parseWeekStart(weekStart)
+      const rangeStart = parseWeekStartString(weekStart)
       const rangeEnd = addDays(rangeStart, 7)
       setState((s) => {
         const keep = s.calendarEvents.filter(
@@ -123,11 +127,20 @@ export function useStore() {
     []
   )
 
-  // Används vid frånkoppling för att rensa all Google-data lokalt.
+  // Används vid frånkoppling för att rensa all Google-data och blocklista lokalt.
   const clearGoogleCalendarEvents = useCallback(() => {
     setState((s) => ({
       ...s,
       calendarEvents: s.calendarEvents.filter((e) => e.source !== 'google'),
+      deletedGoogleEventKeys: [],
+    }))
+  }, [])
+
+  // Lägger till en nyckel i blocklistan för manuellt raderade Google-event.
+  const markGoogleEventDeleted = useCallback((key: string) => {
+    setState((s) => ({
+      ...s,
+      deletedGoogleEventKeys: Array.from(new Set([...s.deletedGoogleEventKeys, key])),
     }))
   }, [])
 
@@ -195,7 +208,7 @@ export function useStore() {
   const runPlanWeek = useCallback((forWeekStart?: string) => {
     const s = stateRef.current
     const weekStartStr = forWeekStart ?? s.currentWeekStart
-    const weekStartDate = parseWeekStart(weekStartStr)
+    const weekStartDate = parseWeekStartString(weekStartStr)
     // Expanderar återkommande bokningar till konkreta instanser för veckan.
     const weekCalendarEvents = expandCalendarEventsForWeek(s.calendarEvents, weekStartStr)
     try {
@@ -257,6 +270,7 @@ export function useStore() {
     addCalendarEvents,
     replaceGoogleCalendarEventsForWeek,
     clearGoogleCalendarEvents,
+    markGoogleEventDeleted,
     updateCalendarEvent,
     removeCalendarEvent,
     addGoal,

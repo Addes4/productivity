@@ -1,20 +1,15 @@
 import { useState, useEffect } from 'react'
-import type { ActivityGoal, PlannedBlock } from '../types'
+import type { ActivityGoal, PlannedBlock, CalendarImportResult } from '../types'
 import { GoalForm } from './GoalForm'
 import { PlanButtons } from './PlanButtons'
 import { ProgressBars } from './ProgressBars'
 
-// Standardiserad återkoppling från importflöden (JSON/iCal/Google).
-interface CalendarImportResult {
-  imported: number
-  skipped: number
-  warnings: string[]
-}
 
 // Högerspalten med målhantering, planering, import/export och Google-koppling.
 export function SidePanel({
   goals,
   plannedBlocks,
+  weekStart,
   minimumViableDay,
   conflictReports,
   editingGoalId,
@@ -35,6 +30,7 @@ export function SidePanel({
 }: {
   goals: ActivityGoal[]
   plannedBlocks: PlannedBlock[]
+  weekStart: string
   minimumViableDay: boolean
   conflictReports: { goalId: string; reason: string; suggestion?: string }[]
   editingGoalId: string | null
@@ -45,7 +41,7 @@ export function SidePanel({
   onPlanWeek: () => void
   onToggleMVD: (on: boolean) => void
   onExport: () => void
-  onImport: (json: string) => void
+  onImport: (json: string) => { ok: boolean; error?: string }
   onImportIcsText: (icsText: string) => CalendarImportResult
   onConnectGoogleCalendar: () => void
   onImportGoogleCalendar: () => Promise<CalendarImportResult>
@@ -79,7 +75,7 @@ export function SidePanel({
       onUpdateGoal(editingGoal.id, g)
       setEditingGoal(null)
     } else {
-      onAddGoal({ ...g, id: `goal-${Date.now()}` } as ActivityGoal)
+      onAddGoal({ ...g, id: `goal-${crypto.randomUUID()}` } as ActivityGoal)
     }
     setShowForm(false)
   }
@@ -91,6 +87,8 @@ export function SidePanel({
 
   // Import av exporterad JSON-state via filväljare.
   const handleImportClick = () => {
+    setImportError(null)
+    setImportStatus(null)
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = 'application/json'
@@ -100,7 +98,12 @@ export function SidePanel({
       const reader = new FileReader()
       reader.onload = () => {
         const text = reader.result as string
-        onImport(text)
+        const result = onImport(text)
+        if (!result.ok) {
+          setImportError(result.error ?? 'Ogiltig JSON-fil. Kontrollera att filen exporterades från appen.')
+        } else {
+          setImportStatus('Importen lyckades.')
+        }
       }
       reader.readAsText(file)
     }
@@ -280,7 +283,7 @@ export function SidePanel({
 
         {/* Progress */}
         <section>
-          <ProgressBars goals={goals} plannedBlocks={plannedBlocks} />
+          <ProgressBars goals={goals} plannedBlocks={plannedBlocks} weekStart={weekStart} />
         </section>
 
         {/* Export / Import */}

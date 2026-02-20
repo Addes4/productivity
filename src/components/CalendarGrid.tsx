@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   DndContext,
   DragEndEvent,
@@ -6,7 +6,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { addMinutes, parseISO, format, differenceInMinutes } from 'date-fns'
+import { addDays, addMinutes, parseISO, format, differenceInMinutes } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import type { CalendarEvent, PlannedBlock, ActivityGoal, Settings } from '../types'
 import { doesRangeOverlapDay, getWeekDates, isAllDayEventRange } from '../utils/dateUtils'
@@ -21,8 +21,10 @@ import { CalendarColumn, type OnBlockClick } from './CalendarColumn'
 
 // Visuell layout för tidsaxeln i veckovyn.
 const HOUR_HEIGHT = 52
-const FIRST_HOUR = 6
-const LAST_HOUR = 22
+const FIRST_HOUR = 0
+const LAST_HOUR = 23
+// Timme att scrolla till vid initial rendering (06:00).
+const INITIAL_SCROLL_HOUR = 6
 
 interface SlotTarget {
   dayIso: string
@@ -59,9 +61,8 @@ function getNewRangeFromSlot(
   const end = addMinutes(start, durationMinutes)
 
   const dayStart = new Date(slotDay)
-  dayStart.setHours(FIRST_HOUR, 0, 0, 0)
-  const dayEnd = new Date(slotDay)
-  dayEnd.setHours(LAST_HOUR, 0, 0, 0)
+  dayStart.setHours(0, 0, 0, 0)
+  const dayEnd = addDays(dayStart, 1) // midnatt nästa dag
   if (start < dayStart || end > dayEnd) return null
 
   return { start, end }
@@ -95,8 +96,16 @@ export function CalendarGrid({
   onAddEvent,
   categoryFilter = [],
 }: CalendarGridProps) {
-  const weekStartDate = parseISO(weekStart)
-  const weekDates = getWeekDates(weekStartDate)
+  const weekStartDate = useMemo(() => parseISO(weekStart), [weekStart])
+  const weekDates = useMemo(() => getWeekDates(weekStartDate), [weekStartDate])
+
+  // Scrolla till INITIAL_SCROLL_HOUR vid första rendering.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = INITIAL_SCROLL_HOUR * HOUR_HEIGHT
+    }
+  }, [])
 
   const getGoal = useCallback(
     (goalId: string) => goals.find((g) => g.id === goalId),
@@ -110,33 +119,47 @@ export function CalendarGrid({
   )
 
   // Veckonummer-events hanteras separat och ska inte visas som vanliga bokningar.
-  const visibleCalendarEvents = calendarEvents.filter((event) => !isWeekNumberEvent(event))
+  const visibleCalendarEvents = useMemo(
+    () => calendarEvents.filter((event) => !isWeekNumberEvent(event)),
+    [calendarEvents]
+  )
 
-  const calendarEventRanges = visibleCalendarEvents.map((event) => {
-    const start = parseISO(event.start)
-    const end = parseISO(event.end)
-    return {
-      event,
-      start,
-      end,
-      isAllDay: event.allDay === true || isAllDayEventRange(start, end),
-    }
-  })
+  const calendarEventRanges = useMemo(
+    () =>
+      visibleCalendarEvents.map((event) => {
+        const start = parseISO(event.start)
+        const end = parseISO(event.end)
+        return {
+          event,
+          start,
+          end,
+          isAllDay: event.allDay === true || isAllDayEventRange(start, end),
+        }
+      }),
+    [visibleCalendarEvents]
+  )
 
-  const timedCalendarEvents = calendarEventRanges
-    .filter((entry) => !entry.isAllDay)
-    .map((entry) => entry.event)
+  const timedCalendarEvents = useMemo(
+    () => calendarEventRanges.filter((entry) => !entry.isAllDay).map((entry) => entry.event),
+    [calendarEventRanges]
+  )
 
   const showCategory = (cat: string) =>
     categoryFilter.length === 0 || categoryFilter.includes(cat)
 
-  const allDayEventsByDay = weekDates.map((day) =>
-    calendarEventRanges
-      .filter(
-        ({ event, start, end, isAllDay }) =>
-          isAllDay && showCategory(event.category) && doesRangeOverlapDay(start, end, day)
-      )
-      .map(({ event }) => event)
+  const allDayEventsByDay = useMemo(
+    () =>
+      weekDates.map((day) =>
+        calendarEventRanges
+          .filter(
+            ({ event, start, end, isAllDay }) =>
+              isAllDay && showCategory(event.category) && doesRangeOverlapDay(start, end, day)
+          )
+          .map(({ event }) => event)
+      ),
+    // showCategory depends on categoryFilter, so include it directly
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [weekDates, calendarEventRanges, categoryFilter]
   )
 
   const dayOverlapLayouts = useMemo(
@@ -169,6 +192,8 @@ export function CalendarGrid({
         ]
         return buildOverlapLayout(dayRanges, 4)
       }),
+    // showCategory depends on categoryFilter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [getGoal, plannedBlocks, timedCalendarEvents, weekDates, categoryFilter]
   )
 
@@ -279,6 +304,32 @@ export function CalendarGrid({
     ]
   )
 
+  // Förpartitionera events och block per dag för att undvika att varje CalendarColumn
+  // itererar hela listan vid rendering (119 celler × alla events annars).
+  const dayEventsList = useMemo(
+    () =>
+      weekDates.map((day) =>
+        timedCalendarEvents.filter((ev) => {
+          const start = parseISO(ev.start)
+          const end = parseISO(ev.end)
+          return doesRangeOverlapDay(start, end, day)
+        })
+      ),
+    [weekDates, timedCalendarEvents]
+  )
+
+  const dayBlocksList = useMemo(
+    () =>
+      weekDates.map((day) =>
+        plannedBlocks.filter((block) => {
+          const start = parseISO(block.start)
+          const end = parseISO(block.end)
+          return doesRangeOverlapDay(start, end, day)
+        })
+      ),
+    [weekDates, plannedBlocks]
+  )
+
   const hours: number[] = []
   for (let h = FIRST_HOUR; h <= LAST_HOUR; h++) hours.push(h)
 
@@ -343,7 +394,7 @@ export function CalendarGrid({
       </div>
 
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        <div className="flex-1 min-h-0 overflow-auto bg-white" style={{ minHeight: (LAST_HOUR - FIRST_HOUR + 1) * HOUR_HEIGHT }}>
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-white" style={{ minHeight: (LAST_HOUR - FIRST_HOUR + 1) * HOUR_HEIGHT }}>
           {hours.map((hour) => (
             <div
               key={hour}
@@ -361,8 +412,8 @@ export function CalendarGrid({
                   hourHeight={HOUR_HEIGHT}
                   firstHour={FIRST_HOUR}
                   lastHour={LAST_HOUR}
-                  calendarEvents={timedCalendarEvents}
-                  plannedBlocks={plannedBlocks}
+                  calendarEvents={dayEventsList[dayIndex] ?? []}
+                  plannedBlocks={dayBlocksList[dayIndex] ?? []}
                   getGoal={getGoal}
                   eventColors={settings.eventColors}
                   categoryFilter={categoryFilter}

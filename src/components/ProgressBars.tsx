@@ -1,22 +1,31 @@
 import type { ActivityGoal, PlannedBlock } from '../types'
-import { differenceInMinutes } from 'date-fns'
-import { parseISO } from 'date-fns'
+import { differenceInMinutes, parseISO, addDays } from 'date-fns'
+import { parseWeekStartString } from '../utils/dateUtils'
 
 // Visar progress per mål baserat på blockstatusar för veckan.
 export function ProgressBars({
   goals,
   plannedBlocks,
+  weekStart,
 }: {
   goals: ActivityGoal[]
   plannedBlocks: PlannedBlock[]
+  weekStart: string
 }) {
+  const weekStartDate = parseWeekStartString(weekStart)
+  const weekEndDate = addDays(weekStartDate, 7)
+
   return (
     <div className="space-y-3">
       <h3 className="font-semibold text-slate-800">Progress per mål</h3>
       {goals.map((goal) => {
-        // Summera tid per status för målet.
+        // Summera tid per status — begränsat till aktuell vecka.
         const target = goal.weeklyTargetMinutes
-        const blocks = plannedBlocks.filter((b) => b.goalId === goal.id)
+        const blocks = plannedBlocks.filter((b) => {
+          if (b.goalId !== goal.id) return false
+          const blockStart = parseISO(b.start)
+          return blockStart >= weekStartDate && blockStart < weekEndDate
+        })
         const doneMinutes = blocks
           .filter((b) => b.status === 'done')
           .reduce((sum, b) => sum + differenceInMinutes(parseISO(b.end), parseISO(b.start)), 0)

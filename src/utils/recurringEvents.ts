@@ -1,11 +1,6 @@
 import { addDays, parseISO } from 'date-fns'
 import type { CalendarEvent, DayOfWeek } from '../types'
-
-// Parsar "yyyy-MM-dd" till lokalt datum vid midnatt.
-function parseWeekStart(weekStart: string): Date {
-  const [y, m, d] = weekStart.split('-').map(Number)
-  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
-}
+import { parseWeekStartString } from './dateUtils'
 
 // Överlappning mellan två tidsintervall.
 function overlapsRange(start: Date, end: Date, rangeStart: Date, rangeEnd: Date): boolean {
@@ -42,7 +37,7 @@ export function expandCalendarEventsForWeek(
   events: CalendarEvent[],
   weekStart: string
 ): CalendarEvent[] {
-  const weekStartDate = parseWeekStart(weekStart)
+  const weekStartDate = parseWeekStartString(weekStart)
   const weekEndDate = addDays(weekStartDate, 7)
   const out: CalendarEvent[] = []
 
@@ -67,6 +62,7 @@ export function expandCalendarEventsForWeek(
       const targetDay = addDays(weekStartDate, dayToOffsetFromMonday(day))
       const dayKey = toDateKey(targetDay)
       if (excludedDates.has(dayKey)) continue
+      if (event.recurrenceEndDate && dayKey > event.recurrenceEndDate) continue
       const occurrenceStart = new Date(targetDay)
       occurrenceStart.setHours(
         start.getHours(),

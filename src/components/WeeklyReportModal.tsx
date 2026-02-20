@@ -1,6 +1,5 @@
 import type { ActivityGoal, PlannedBlock, ConflictReport } from '../types'
-import { differenceInMinutes } from 'date-fns'
-import { parseISO } from 'date-fns'
+import { differenceInMinutes, parseISO } from 'date-fns'
 
 // Summerad vy av veckans utfall per mål.
 export function WeeklyReportModal({

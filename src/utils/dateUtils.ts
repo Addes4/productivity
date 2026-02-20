@@ -14,7 +14,11 @@ import {
 } from 'date-fns'
 import type { DayOfWeek } from '../types'
 
-const TIME_FORMAT = 'HH:mm'
+/** Parsar "yyyy-MM-dd" till lokalt datum vid midnatt (utan tidszon-konvertering). */
+export function parseWeekStartString(weekStart: string): Date {
+  const [y, m, d] = weekStart.split('-').map(Number)
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
+}
 
 /** Returnerar måndag för den vecka som innehåller date */
 export function getWeekStart(date: Date): Date {
@@ -31,9 +35,6 @@ export function parseTime(timeStr: string, refDate: Date): Date {
   return setMilliseconds(setSeconds(setMinutes(setHours(refDate, h), m ?? 0), 0), 0)
 }
 
-export function formatTime(d: Date): string {
-  return format(d, TIME_FORMAT)
-}
 
 /** Dag 0 = söndag i JS; vi använder 0=sön, 1=mån... */
 export function getDayOfWeek(d: Date): DayOfWeek {

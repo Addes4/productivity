@@ -107,7 +107,7 @@ function getBlockedIntervalsForDay(
       blocks.push({ start, end })
       const buf = travelBuffers.get(b.goalId) ?? 0
       if (buf > 0) {
-        const bufferStart = addMinutes(end, 0)
+        const bufferStart = end
         const bufferEnd = addMinutes(end, buf)
         if (overlapsInterval(bufferStart, bufferEnd, dayStart, dayEndExclusive)) {
           blocks.push({ start: bufferStart, end: bufferEnd })

@@ -32,6 +32,7 @@ export interface CalendarEvent {
   allDay?: boolean
   recurrenceDays?: DayOfWeek[] // veckovis återkommande på valda veckodagar
   recurrenceExDates?: string[] // lokala datum-nycklar ("yyyy-MM-dd") som ska hoppas över
+  recurrenceEndDate?: string // "yyyy-MM-dd" — inga instanser genereras efter detta datum
   recurrenceParentId?: string // används endast för renderade instanser
   recurrenceInstanceDate?: string // används endast för renderade instanser
   source: EventSource
@@ -112,12 +113,11 @@ export interface ConflictReport {
   suggestion?: string
 }
 
-// Tidigare/alternativ schemaversion (modell reserverad för historik).
-export interface WeekScheduleVersion {
-  weekStart: string // ISO date (monday)
-  plannedBlocks: PlannedBlock[]
-  conflictReports: ConflictReport[]
-  createdAt: string
+// Standardiserad återkoppling från importflöden (JSON/iCal/Google).
+export interface CalendarImportResult {
+  imported: number
+  skipped: number
+  warnings: string[]
 }
 
 // Hela persistenta app-state.
@@ -130,4 +130,5 @@ export interface AppState {
   conflictReports: ConflictReport[]
   minimumViableDay: boolean
   scheduleVersion: number
+  deletedGoogleEventKeys: string[] // "title|start|end"-nycklar för manuellt raderade Google-event
 }

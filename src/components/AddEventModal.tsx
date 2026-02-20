@@ -53,14 +53,16 @@ export function AddEventModal({
   existingEvent?: CalendarEvent | null
   onSave: (
     event: Omit<CalendarEvent, 'id'>,
-    existingId?: string
+    existingId?: string,
+    instanceOverride?: { parentId: string; instanceDate: string }
   ) => { ok: true } | { ok: false; error: string }
-  onDelete?: (event: CalendarEvent) => void
+  onDelete?: (event: CalendarEvent, mode: 'single' | 'future' | 'all') => void
   onClose: () => void
 }) {
   // Form state (initialiseras från existingEvent om vi redigerar).
   const [title, setTitle] = useState(existingEvent?.title ?? '')
   const [date, setDate] = useState(existingEvent ? toDateInputValue(existingEvent.start) : weekStart)
+  const [endDate, setEndDate] = useState(existingEvent ? toDateInputValue(existingEvent.end) : weekStart)
   const [startTime, setStartTime] = useState(
     existingEvent ? toTimeInputValue(existingEvent.start) : '09:00'
   )
@@ -81,6 +83,7 @@ export function AddEventModal({
     if (!existingEvent) {
       setTitle('')
       setDate(weekStart)
+      setEndDate(weekStart)
       setStartTime('09:00')
       setEndTime('10:00')
       setCategory('Övrigt')
@@ -91,6 +94,7 @@ export function AddEventModal({
     }
     setTitle(existingEvent.title)
     setDate(toDateInputValue(existingEvent.start))
+    setEndDate(toDateInputValue(existingEvent.end))
     setStartTime(toTimeInputValue(existingEvent.start))
     setEndTime(toTimeInputValue(existingEvent.end))
     setCategory(existingEvent.category)
@@ -112,8 +116,9 @@ export function AddEventModal({
     const [sh, sm] = startTime.split(':').map(Number)
     const [eh, em] = endTime.split(':').map(Number)
     const [y, mo, d] = date.split('-').map(Number)
+    const [ey, emo, ed] = endDate.split('-').map(Number)
     const start = new Date(y, mo - 1, d, sh, sm || 0, 0, 0)
-    const end = new Date(y, mo - 1, d, eh, em || 0, 0, 0)
+    const end = new Date(ey, emo - 1, ed, eh, em || 0, 0, 0)
     if (end <= start) {
       setFormError('Sluttiden måste vara efter starttiden.')
       return
@@ -124,7 +129,7 @@ export function AddEventModal({
       return
     }
 
-    const saveResult = onSave({
+    const eventData: Omit<CalendarEvent, 'id'> = {
       title,
       start: start.toISOString(),
       end: end.toISOString(),
@@ -134,7 +139,17 @@ export function AddEventModal({
       source: existingEvent?.source ?? 'manual',
       locked: existingEvent?.locked ?? false,
       category,
-    }, existingEvent?.recurrenceParentId ?? existingEvent?.id)
+    }
+
+    // Redigering av en enskild instans av återkommande event: skapa undantag + ny fristående bokning.
+    const isRecurringInstance =
+      existingEvent?.recurrenceParentId != null && existingEvent?.recurrenceInstanceDate != null
+    const saveResult = isRecurringInstance
+      ? onSave(eventData, undefined, {
+          parentId: existingEvent!.recurrenceParentId!,
+          instanceDate: existingEvent!.recurrenceInstanceDate!,
+        })
+      : onSave(eventData, existingEvent?.id)
     if (!saveResult.ok) {
       setFormError(saveResult.error)
       return
@@ -172,34 +187,38 @@ export function AddEventModal({
               required
             />
           </div>
-          <div>
-            <label className="block font-medium text-slate-700 mb-1">Datum</label>
+          <div className="grid grid-cols-[auto_1fr_1fr] gap-x-2 gap-y-1 items-center">
+            <span className="text-xs font-medium text-slate-500 pr-1">Start</span>
             <input
               type="date"
               value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2"
+              onChange={(e) => {
+                setDate(e.target.value)
+                // Flytta slutdatumet automatiskt om det nu hamnar före startdatumet.
+                if (e.target.value > endDate) setEndDate(e.target.value)
+              }}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
             />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Start</label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Slut</label>
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2"
-              />
-            </div>
+            <input
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <span className="text-xs font-medium text-slate-500 pr-1">Slut</span>
+            <input
+              type="date"
+              value={endDate}
+              min={date}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <input
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+            />
           </div>
           <div>
             <label className="block font-medium text-slate-700 mb-1">Kategori</label>
@@ -250,25 +269,13 @@ export function AddEventModal({
               {formError}
             </p>
           )}
-          <div className="flex gap-2 pt-4">
+          <div className="flex gap-2 pt-4 flex-wrap">
             <button
               type="submit"
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
             >
               Spara
             </button>
-            {existingEvent && onDelete && (
-              <button
-                type="button"
-                onClick={() => {
-                  onDelete(existingEvent)
-                  onClose()
-                }}
-                className="px-4 py-2 bg-rose-600 text-white rounded-lg font-medium hover:bg-rose-700"
-              >
-                {existingEvent.recurrenceParentId ? 'Ta bort denna gång' : 'Ta bort'}
-              </button>
-            )}
             <button
               type="button"
               onClick={onClose}
@@ -277,6 +284,46 @@ export function AddEventModal({
               Avbryt
             </button>
           </div>
+          {existingEvent && onDelete && (
+            <div className="pt-2 border-t border-slate-100">
+              {existingEvent.recurrenceParentId ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-slate-500 mb-1.5">Ta bort återkommande bokning:</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { onDelete(existingEvent, 'single'); onClose() }}
+                      className="px-3 py-1.5 text-xs border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50 font-medium"
+                    >
+                      Denna gång
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { onDelete(existingEvent, 'future'); onClose() }}
+                      className="px-3 py-1.5 text-xs border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50 font-medium"
+                    >
+                      Denna och framtida
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { onDelete(existingEvent, 'all'); onClose() }}
+                      className="px-3 py-1.5 text-xs bg-rose-600 text-white rounded-lg hover:bg-rose-700 font-medium"
+                    >
+                      Alla
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { onDelete(existingEvent, 'all'); onClose() }}
+                  className="px-4 py-2 bg-rose-600 text-white rounded-lg font-medium hover:bg-rose-700 text-sm"
+                >
+                  Ta bort
+                </button>
+              )}
+            </div>
+          )}
         </form>
       </div>
     </div>
